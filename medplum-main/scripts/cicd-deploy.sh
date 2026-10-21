@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+
+# CI/CD deploy script
+# This script should only be called from the CI/CD server.
+# Assumes that current working directory is project root.
+# Inspects files changed in the most recent commit
+# and deploys the appropriate service
+
+# Echo commands
+set -x
+
+# Initialize FORCE flag to false
+FORCE=false
+
+# Parse command line arguments
+for arg in "$@"; do
+  if [[ "$arg" == "--force" ]]; then
+    FORCE=true
+  fi
+done
+
+COMMIT_MESSAGE=$(git log -1 --pretty=short)
+echo "$COMMIT_MESSAGE"
+
+# When multiple commits land in a single push (e.g. merge queue batching),
+# GITHUB_BEFORE is the SHA that HEAD pointed to before the push. Diffing
+# HEAD..GITHUB_BEFORE covers every commit in the batch, not just the last one.
+# Fall back to HEAD~1 when GITHUB_BEFORE is absent (workflow_dispatch)
+# cat-file -e checks that we have the commit locally in order to diff successfully
+if [[ -n "$GITHUB_BEFORE" ]] && git cat-file -e "$GITHUB_BEFORE" 2>/dev/null; then
+  FILES_CHANGED=$(git diff --name-only HEAD "$GITHUB_BEFORE")
+else
+  FILES_CHANGED=$(git diff --name-only HEAD HEAD~1)
+fi
+echo "$FILES_CHANGED"
+
+DEPLOY_APP=false
+DEPLOY_DOCS=false
+DEPLOY_FOOMEDICAL=false
+DEPLOY_GRAPHIQL=false
+DEPLOY_PROVIDER=false
+DEPLOY_SERVER=false
+DEPLOY_STORYBOOK=false
+
+#
+# Inspect files changed
+#
+
+if [[ "$FILES_CHANGED" =~ build.yml ]]; then
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ Dockerfile ]]; then
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ cicd-deploy.sh ]]; then
+  DEPLOY_APP=true
+  DEPLOY_DOCS=true
+  DEPLOY_FOOMEDICAL=true
+  DEPLOY_GRAPHIQL=true
+  DEPLOY_PROVIDER=true
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ deploy-introspection-schema.sh ]]; then
+  DEPLOY_GRAPHIQL=true
+fi
+
+if [[ "$FILES_CHANGED" =~ examples/foomedical ]] || [[ "$FILES_CHANGED" =~ deploy-foomedical.sh ]]; then
+  DEPLOY_FOOMEDICAL=true
+fi
+
+if [[ "$FILES_CHANGED" =~ examples/medplum-provider ]] || [[ "$FILES_CHANGED" =~ deploy-provider-app.sh ]]; then
+  DEPLOY_PROVIDER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/app ]]; then
+  DEPLOY_APP=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/ccda ]]; then
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/core ]]; then
+  DEPLOY_APP=true
+  DEPLOY_DOCS=true
+  DEPLOY_FOOMEDICAL=true
+  DEPLOY_PROVIDER=true
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/definitions ]]; then
+  DEPLOY_APP=true
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/dosespot ]]; then
+  DEPLOY_PROVIDER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/docs ]]; then
+  DEPLOY_DOCS=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/fhir-router ]]; then
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/fhirtypes ]]; then
+  DEPLOY_APP=true
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/graphiql ]]; then
+  DEPLOY_GRAPHIQL=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/health-gorilla ]]; then
+  DEPLOY_PROVIDER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/scriptsure ]]; then
+  DEPLOY_PROVIDER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/server ]]; then
+  DEPLOY_SERVER=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/storybook ]]; then
+  DEPLOY_STORYBOOK=true
+fi
+
+# Tricky: `packages/react-scheduling` should not affect `app`, so
+# we need to be careful not to use a matching prefix here.
+if [[ "$FILES_CHANGED" =~ packages/react/ ]]; then
+  DEPLOY_APP=true
+  DEPLOY_FOOMEDICAL=true
+  DEPLOY_PROVIDER=true
+  DEPLOY_STORYBOOK=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/react-hooks ]]; then
+  DEPLOY_APP=true
+  DEPLOY_FOOMEDICAL=true
+  DEPLOY_PROVIDER=true
+  DEPLOY_STORYBOOK=true
+fi
+
+if [[ "$FILES_CHANGED" =~ packages/react-scheduling ]]; then
+  DEPLOY_PROVIDER=true
+  DEPLOY_STORYBOOK=true
+fi
+
+if [[ "$FORCE" = true ]]; then
+  DEPLOY_APP=true
+  DEPLOY_DOCS=true
+  DEPLOY_FOOMEDICAL=true
+  DEPLOY_GRAPHIQL=true
+  DEPLOY_PROVIDER=true
+  DEPLOY_SERVER=true
+  DEPLOY_STORYBOOK=true
+fi
+
+#
+# Send a slack message
+#
+
+ESCAPED_COMMIT_MESSAGE=$(echo "$COMMIT_MESSAGE" | sed 's/"/\\"/g')
+
+read -r -d '' PAYLOAD <<- EOM
+{
+  "text": "Deploying ${ESCAPED_COMMIT_MESSAGE}",
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "Deploying ${ESCAPED_COMMIT_MESSAGE}\\n\\n* Deploy app: ${DEPLOY_APP}\\n\\n* Deploy docs: ${DEPLOY_DOCS}\\n\\n* Deploy foomedical: ${DEPLOY_FOOMEDICAL}\\n\\n* Deploy graphiql: ${DEPLOY_GRAPHIQL}\\n\\n* Deploy provider: ${DEPLOY_PROVIDER}\\n\\n* Deploy server: ${DEPLOY_SERVER}\\n\\n* Deploy storybook: ${DEPLOY_STORYBOOK}"
+      }
+    }
+  ]
+}
+EOM
+
+curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
+
+#
+# Run the appropriate deploy scripts
+#
+
+# Runs `npm run <script> -- <turbo args>` in a subshell with the env vars set to placeholders, which the
+# deploy-*.sh scripts later replace with real values in the build output
+build_with_placeholders() {
+  local script="$1"
+  shift
+  (
+    export MEDPLUM_BASE_URL="__MEDPLUM_BASE_URL__"
+    export MEDPLUM_CLIENT_ID="__MEDPLUM_CLIENT_ID__"
+    export MEDPLUM_REGISTER_ENABLED="__MEDPLUM_REGISTER_ENABLED__"
+    export MEDPLUM_AWS_TEXTRACT_ENABLED="__MEDPLUM_AWS_TEXTRACT_ENABLED__"
+    export GOOGLE_CLIENT_ID="__GOOGLE_CLIENT_ID__"
+    export RECAPTCHA_SITE_KEY="__RECAPTCHA_SITE_KEY__"
+    npm run "$script" -- "$@"
+  )
+}
+
+if [[ "$DEPLOY_APP" = true ]]; then
+  echo "Deploy app"
+  build_with_placeholders build --force --filter=@medplum/app
+
+  source ./scripts/build-docker-app.sh --latest
+  source ./scripts/deploy-app.sh
+fi
+
+if [[ "$DEPLOY_SERVER" = true ]]; then
+  echo "Deploy server"
+  npm run build -- --force --filter=@medplum/server
+  source ./scripts/build-docker-server.sh --latest
+  source ./scripts/deploy-server.sh
+fi
+
+if [[ "$DEPLOY_GRAPHIQL" = true ]]; then
+  echo "Deploy GraphiQL"
+  npm run build -- --force --filter=@medplum/graphiql
+  source ./scripts/deploy-graphiql.sh
+fi
+
+if [[ "$DEPLOY_STORYBOOK" = true ]]; then
+  echo "Deploy storybook"
+  npm run build:all -- --filter=@medplum/storybook
+  source ./scripts/deploy-storybook.sh
+fi
+
+# Deploy docs near the end since it is the slowest
+if [[ "$DEPLOY_DOCS" = true ]]; then
+  echo "Deploy docs"
+  npm run build:docs
+  source ./scripts/deploy-docs.sh
+fi
+
+# Examples deploy after docs so their failures can't block docs
+
+if [[ "$DEPLOY_FOOMEDICAL" = true ]]; then
+  echo "Deploy foomedical"
+  # --only: build:fast already built all of its dependencies
+  build_with_placeholders build:all --only --filter=foomedical || exit 1
+  source ./scripts/deploy-foomedical.sh
+fi
+
+if [[ "$DEPLOY_PROVIDER" = true ]]; then
+  echo "Deploy provider"
+  # Not --only: it depends on packages build:fast skips (react-scheduling, dosespot, etc.)
+  build_with_placeholders build:all --filter=medplum-provider || exit 1
+  source ./scripts/deploy-provider-app.sh
+fi

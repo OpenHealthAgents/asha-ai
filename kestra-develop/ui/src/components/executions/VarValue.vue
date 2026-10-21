@@ -1,0 +1,288 @@
+<template>
+    <KsButtonGroup v-if="isFileValid(value)">
+        <KsButton
+            type="primary"
+            tag="a"
+            :href="itemUrl(String(value))"
+            target="_blank"
+            size="small"
+            :icon="Download"
+            rel="noopener noreferrer"
+        >
+            {{ $t('download') }}
+        </KsButton>
+        <KsButton
+            v-if="Utils.isIon(value)"
+            type="primary"
+            tag="a"
+            :href="jsonlUrl(String(value))"
+            target="_blank"
+            size="small"
+            rel="noopener noreferrer"
+        >
+            {{ $t('jsonl') }}
+        </KsButton>
+        <FilePreviewDrawer v-if="Utils.isFile(value)" :value="String(value)" :executionId="execution.id" />
+        <KsButton disabled size="small" type="primary" v-if="humanSize">
+            ({{ humanSize }})
+        </KsButton>
+    </KsButtonGroup>
+    <KsButtonGroup v-else-if="Utils.isFile(value) && fileStatus === 'loading'">
+        <KsButton disabled loading size="small" type="primary">
+            {{ $t('download') }}
+        </KsButton>
+    </KsButtonGroup>
+    <KsTooltip v-else-if="Utils.isFile(value) && fileStatus === 'missing'" :content="$t('file unavailable description')">
+        <KsButton disabled size="small" type="primary" :icon="FileAlertOutline">
+            {{ $t('file unavailable') }}
+        </KsButton>
+    </KsTooltip>
+    <KsButtonGroup v-else-if="uriHref">
+        <KsButton
+            type="primary"
+            tag="a"
+            size="small"
+            :href="uriHref"
+            target="_blank"
+            :icon="OpenInNew"
+        >
+            {{ $t('open') }}
+        </KsButton>
+    </KsButtonGroup>
+
+    <span v-else-if="value === null">
+        <em>null</em>
+    </span>
+    <!-- Only a real empty string; do not default missing values to this branch. -->
+    <span v-else-if="value === ''">
+        <em>{{ Utils.EMPTY_STRING_DISPLAY }}</em>
+    </span>
+    <span v-else-if="emptyContainer">
+        <em>{{ emptyContainer }}</em>
+    </span>
+    <div v-else>
+        <KsAlert
+            v-if="isTruncated"
+            type="warning"
+            :closable="false"
+            data-test="var-value-truncated"
+            :title="$t('large_outputs.value_truncated', {size: fullTextSize})"
+        >
+            <KsButton size="small" data-test="copy-full" @click="copyFullValue">
+                {{ $t('copy') }}
+            </KsButton>
+            <KsButton size="small" :icon="Download" data-test="download-full" @click="downloadFullValue">
+                {{ $t('download') }}
+            </KsButton>
+        </KsAlert>
+        <KsEditor
+            v-if="isComplexValue(value)"
+            v-bind="editorBindings"
+            :readOnly="true"
+            :inline="true"
+            :options="{
+                showScroll: true,
+                fullHeight: false,
+                customHeight: editorHeight,
+            }"
+            :navbar="false"
+            :modelValue="displayText"
+            lang="json"
+            class="complex-value-editor"
+        />
+        <span v-else>{{ displayText }}</span>
+    </div>
+</template>
+
+<script setup lang="ts">
+    import {handledIf} from "../../utils/kestraHttp"
+    import {computed, ref, watch, onMounted} from "vue"
+    import Download from "vue-material-design-icons/Download.vue"
+    import OpenInNew from "vue-material-design-icons/OpenInNew.vue"
+    import FileAlertOutline from "vue-material-design-icons/FileAlertOutline.vue"
+    import FilePreviewDrawer from "./FilePreviewDrawer.vue"
+    import {KsAlert, KsEditor, copyToClipboard} from "@kestra-io/design-system"
+    import {useEditorBindings} from "../../composables/useEditorBindings"
+    import {executionFileUrl} from "../../utils/executionUtils"
+    import * as ExecutionsAPI from "@kestra-io/kestra-sdk/executions"
+
+    import * as Utils from "../../utils/utils"
+
+    interface Execution {
+        id: string;
+    }
+
+    const props = withDefaults(defineProps<{
+        value?: string | object | boolean | number | null;
+        execution?: Execution;
+        restrictUri?: boolean;
+        /** Output key this value came from, used to name the download of a truncated value. */
+        name?: string;
+    }>(), {
+        // No default for `value`: defaulting to "" made an omitted prop look like an empty string.
+        execution: () => ({id: ""}),
+        restrictUri: false,
+        name: "output",
+    })
+
+    const editorBindings = useEditorBindings()
+
+    const humanSize = ref<string>("")
+    const fileStatus = ref<"loading" | "available" | "missing">("loading")
+
+    const isFileValid = (value: unknown): boolean => {
+        return Utils.isFile(value) && humanSize.value.length > 0 && humanSize.value !== "0B"
+    }
+
+    const isURI = (value: unknown): value is string => {
+        if (typeof value !== "string") {
+            return false
+        }
+        try {
+            const url = new URL(value)
+            if (props.restrictUri) {
+                return ["http:", "https:"].includes(url.protocol)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    // Narrow for the template: `value` stays optional, so v-if type guards do not satisfy vue-tsc alone.
+    const uriHref = computed(() =>
+        isURI(props.value) && !Utils.isFile(props.value) ? props.value : undefined,
+    )
+
+    const isComplexValue = (value: unknown): boolean => {
+        if ((typeof value === "object" && value !== null) || Array.isArray(value)) {
+            return true
+        }
+
+        if (typeof value === "string") {
+            try {
+                const parsed = JSON.parse(value)
+                return (typeof parsed === "object" && parsed !== null) || Array.isArray(parsed)
+            } catch {
+                return false
+            }
+        }
+
+        return false
+    }
+
+    const getDisplayValue = (value: unknown): unknown => {
+        if ((typeof value === "object" && value !== null) || Array.isArray(value)) {
+            return value
+        }
+
+        if (typeof value === "string") {
+            try {
+                const parsed = JSON.parse(value)
+                if ((typeof parsed === "object" && parsed !== null) || Array.isArray(parsed)) {
+                    return parsed
+                }
+            } catch {
+                return value
+            }
+        }
+
+        return value
+    }
+
+    const displayed = computed(() => getDisplayValue(props.value))
+
+    // Empty containers are complex enough to reach the editor branch, one Monaco mount per row.
+    const emptyContainer = computed(() => {
+        const value = displayed.value
+
+        if (Array.isArray(value)) {
+            return value.length === 0 ? "[]" : undefined
+        }
+        if (typeof value === "object" && value !== null) {
+            return Object.keys(value).length === 0 ? "{}" : undefined
+        }
+
+        return undefined
+    })
+
+    // Only the editor needs valid JSON; a plain string never reaches it and is clipped by length.
+    const preview = computed(() => {
+        const value = displayed.value
+        return typeof value === "object" && value !== null ? Utils.boundForDisplay(value) : undefined
+    })
+
+    const fullText = computed(() => {
+        const value = displayed.value
+        return typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? ""
+    })
+
+    const displayText = computed(() => preview.value
+        ? JSON.stringify(preview.value.value, null, 2) ?? ""
+        : Utils.capForDisplay(fullText.value))
+
+    const isTruncated = computed(() => preview.value
+        ? preview.value.truncated
+        : displayText.value.length < fullText.value.length)
+
+    const fullTextSize = computed(() => Utils.humanTextSize(fullText.value))
+
+    const editorHeight = computed(() => Math.min(20, Math.max(5, displayText.value.split("\n").length)))
+
+    const copyFullValue = () => copyToClipboard(fullText.value)
+
+    const downloadFullValue = () => Utils.downloadText(
+        fullText.value,
+        `${props.name}.${preview.value ? "json" : "txt"}`,
+    )
+
+    const itemUrl = (value: string): string => {
+        return executionFileUrl(props.execution?.id, value)
+    }
+
+    const jsonlUrl = (value: string): string => {
+        return `${itemUrl(value)}&format=JSONL`
+    }
+
+    const getFileSize = async (): Promise<void> => {
+        const path = props.value
+        if (Utils.isFile(path) && props.execution?.id) {
+            humanSize.value = ""
+            fileStatus.value = "loading"
+
+            let data
+            try {
+                data = await ExecutionsAPI.fileMetadatasFromExecution({
+                    executionId: props.execution.id,
+                    path: String(path),
+                })
+            } catch (e: unknown) {
+                if (!handledIf(e, [404, 422])) throw e
+            }
+            if(!data){
+                fileStatus.value = "missing"
+                return
+            }
+            humanSize.value = Utils.humanFileSize(data.size)
+            fileStatus.value = "available"
+        }
+    }
+
+    watch(() => props.value, (newValue) => {
+        if (newValue) {
+            getFileSize()
+        }
+    })
+
+    onMounted(() => {
+        getFileSize()
+    })
+</script>
+
+<style scoped>
+.complex-value-editor {
+    margin-top: 0.5rem;
+    border: 1px solid var(--ks-border-default);
+    border-radius: 4px;
+}
+</style>

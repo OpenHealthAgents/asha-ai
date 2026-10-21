@@ -1,0 +1,104 @@
+<template>
+    <Handle type="source" :position="sourcePosition" />
+    <BasicNode
+        :id="id"
+        :data="formattedData"
+        :color="color"
+        :class="{'node-core--error': validationIssues.length > 0}"
+        :icons="icons"
+        :loadIcon="loadIcon"
+    >
+        <template #title-status>
+            <ValidationBadge :issues="validationIssues" />
+        </template>
+        <template #title-actions>
+            <NodeMenu :actions="actions" />
+        </template>
+    </BasicNode>
+    <Handle type="target" :position="targetPosition" />
+</template>
+
+<script setup lang="ts">
+    import {computed, inject} from "vue"
+    import {useI18n} from "vue-i18n"
+    import {Handle, Position} from "@vue-flow/core"
+    import {
+        SECTIONS,
+        type PluginIconData,
+        type PluginIconMap,
+    } from "@kestra-io/design-system"
+    import InformationOutline from "vue-material-design-icons/InformationOutline.vue"
+    import Pencil from "vue-material-design-icons/Pencil.vue"
+    import Delete from "vue-material-design-icons/Delete.vue"
+    import BasicNode, {type BasicNodeData} from "./BasicNode.vue"
+    import NodeMenu, {type NodeAction} from "./NodeMenu.vue"
+    import ValidationBadge from "./ValidationBadge.vue"
+    import {VALIDATION_ISSUES_INJECTION_KEY} from "../injectionKeys"
+    import {EVENTS} from "../utils/constants"
+    import * as Utils from "../utils/utils"
+
+    interface TriggerDefinition {
+        type?: string;
+        description?: string;
+        disabled?: boolean;
+    }
+
+    defineOptions({name: "Task", inheritAttrs: false})
+
+    const {data, sourcePosition, targetPosition, id, icons, loadIcon} = defineProps<{
+        data: BasicNodeData & {
+            isReadOnly?: boolean;
+            node: {trigger?: TriggerDefinition; triggerDeclaration?: TriggerDefinition};
+        };
+        sourcePosition?: Position;
+        targetPosition?: Position;
+        id: string;
+        icons?: PluginIconMap;
+        loadIcon?: (cls: string) => Promise<PluginIconData | undefined>;
+    }>()
+
+    const emit = defineEmits([EVENTS.DELETE, EVENTS.EDIT, EVENTS.SHOW_DESCRIPTION, EVENTS.EXPAND])
+
+    const {t} = useI18n()
+
+    const color = computed(() => data.color ?? "primary")
+    const triggerId = computed(() => Utils.afterLastDot(id))
+    const validationIssuesByTask = inject(VALIDATION_ISSUES_INJECTION_KEY, undefined)
+    const validationIssues = computed<string[]>(() => validationIssuesByTask?.value?.get(triggerId.value ?? "") ?? [])
+    const formattedData = computed(() => ({
+        ...data,
+        unused: data.node?.triggerDeclaration?.disabled || data.node?.trigger?.disabled,
+    }))
+
+    const actions = computed<NodeAction[]>(() => {
+        const list: NodeAction[] = []
+        const trigger = data.node?.trigger ?? data.node?.triggerDeclaration
+
+        if (trigger?.description) {
+            list.push({
+                key: "description",
+                label: t("show description"),
+                icon: InformationOutline,
+                onClick: () => emit(EVENTS.SHOW_DESCRIPTION, {id: triggerId.value, description: trigger.description}),
+            })
+        }
+        if (!data.isReadOnly) {
+            list.push({
+                key: "edit",
+                label: t("edit"),
+                icon: Pencil,
+                onClick: () => emit(EVENTS.EDIT, {task: data.node.triggerDeclaration, section: SECTIONS.TRIGGERS}),
+            })
+            list.push({
+                key: "delete",
+                label: t("delete"),
+                icon: Delete,
+                danger: true,
+                divided: true,
+                onClick: () => emit(EVENTS.DELETE, {id: triggerId.value, section: SECTIONS.TRIGGERS}),
+            })
+        }
+
+        return list
+    })
+</script>

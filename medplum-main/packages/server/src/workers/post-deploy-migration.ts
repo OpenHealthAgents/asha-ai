@@ -1,0 +1,323 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { capitalize, getReferenceString, normalizeErrorString, PropertyType, toTypedValue } from '@medplum/core';
+import type { Parameters, ParametersParameter } from '@medplum/fhirtypes';
+import type { Job, JobsOptions } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
+import type { PoolClient } from 'pg';
+import * as semver from 'semver';
+import { tryGetRequestContext, tryRunInRequestContext } from '../context';
+import { DatabaseMode, getDatabasePool } from '../database';
+import type { AsyncJobExecutor } from '../fhir/operations/utils/asyncjobexecutor';
+import type { SystemRepository } from '../fhir/repo';
+import { getShardSystemRepo } from '../fhir/repo';
+import { globalLogger } from '../logger';
+import type {
+  CustomPostDeployMigrationJobData,
+  DynamicPostDeployJobData,
+  PostDeployJobData,
+  PostDeployJobRunResult,
+  PostDeployMigration,
+  PrepareJobDataContext,
+} from '../migrations/data/types';
+import { executeMigrationActions } from '../migrations/migrate';
+import {
+  completePostDeployMigration,
+  enforceStrictMigrationVersionChecks,
+  getPostDeployManifestEntry,
+  getPostDeployMigration,
+  isFirstBootMode,
+  MigrationDefinitionNotFoundError,
+  withLongRunningDatabaseClient,
+} from '../migrations/migration-utils';
+import type { MigrationActionResult, PhasalMigration } from '../migrations/types';
+import { getRegisteredServers } from '../server-registry';
+import { getAsyncJobTracking, getTrackingAsyncJobExecutor, normalizeJobTarget } from './base';
+import type { WorkerInitializer, WorkerInitializerOptions } from './utils';
+import {
+  addVerboseQueueLogging,
+  defaultQueueOptions,
+  getWorkerBullmqConfig,
+  isJobActive,
+  isJobCompatible,
+  moveToDelayedAndThrow,
+  queueRegistry,
+} from './utils';
+
+export const PostDeployMigrationQueueName = 'PostDeployMigrationQueue';
+
+function getJobDataLoggingFields(job: Job<PostDeployJobData>): Record<string, string> {
+  return {
+    asyncJob: 'AsyncJob/' + job.data.tracking.asyncJobId,
+    jobType: job.data.type,
+  };
+}
+
+export const initPostDeployMigrationWorker: WorkerInitializer = (config, options?: WorkerInitializerOptions) => {
+  const queueOptions = defaultQueueOptions(config);
+  const queue = new Queue<PostDeployJobData>(PostDeployMigrationQueueName, {
+    ...queueOptions,
+    defaultJobOptions: {
+      ...queueOptions.defaultJobOptions,
+      attempts: 1, // No retries
+    },
+  });
+
+  let worker: Worker<PostDeployJobData> | undefined;
+  if (options?.workerEnabled !== false) {
+    worker = new Worker<PostDeployJobData>(
+      PostDeployMigrationQueueName,
+      async (job) => tryRunInRequestContext(job.data.requestId, job.data.traceId, async () => jobProcessor(job)),
+      getWorkerBullmqConfig(config, 'post-deploy-migration', queueOptions, { concurrency: 1 })
+    );
+    addVerboseQueueLogging<PostDeployJobData>(queue, worker, getJobDataLoggingFields);
+  }
+  return { queue, worker, name: PostDeployMigrationQueueName };
+};
+
+export async function isClusterCompatible(migrationNumber: number): Promise<boolean> {
+  if (!enforceStrictMigrationVersionChecks()) {
+    return true;
+  }
+
+  const servers = await getRegisteredServers(true);
+  const entry = getPostDeployManifestEntry(migrationNumber);
+  const requiredVersion = entry.serverVersion;
+  return servers.every((server) => semver.gte(server.version, requiredVersion));
+}
+
+export async function jobProcessor(job: Job<PostDeployJobData>): Promise<void> {
+  job.data = normalizeJobTarget(job.data);
+  const exec = await getTrackingAsyncJobExecutor(job.data.tracking);
+  const asyncJob = exec.getAsyncJob();
+
+  if (!isJobCompatible(asyncJob)) {
+    await moveToDelayedAndThrow(job, 'Post-deploy migration delayed since this worker is not compatible');
+  }
+
+  if (!isJobActive(asyncJob)) {
+    globalLogger.info(`${PostDeployMigrationQueueName} processor skipping job since AsyncJob is not active`, {
+      jobId: job.id,
+      ...getJobDataLoggingFields(job),
+      asyncJobStatus: asyncJob.status,
+    });
+    return;
+  }
+
+  if (job.data.type === 'dynamic') {
+    await runDynamicMigration(exec, job as Job<DynamicPostDeployJobData>);
+    return;
+  }
+
+  const migrationNumber = asyncJob.dataVersion;
+  if (!migrationNumber) {
+    throw new Error(`Post-deploy migration number (AsyncJob.dataVersion) not found in ${getReferenceString(asyncJob)}`);
+  }
+
+  let migration: PostDeployMigration;
+  try {
+    migration = getPostDeployMigration(migrationNumber);
+  } catch (err: any) {
+    if (err instanceof MigrationDefinitionNotFoundError) {
+      await moveToDelayedAndThrow(
+        job,
+        'Post-deploy migration delayed since migration definition was not found on this worker'
+      );
+    }
+    throw err;
+  }
+
+  if (migration.type !== job.data.type) {
+    throw new Error(`Post-deploy migration ${migrationNumber} is not a ${job.data.type} migration`);
+  }
+
+  if (!(await isClusterCompatible(migrationNumber))) {
+    await moveToDelayedAndThrow(
+      job,
+      `Post-deploy migration v${migrationNumber} delayed since the server cluster is not compatible`
+    );
+  }
+
+  const systemRepo = getShardSystemRepo(job.data.target.shardId);
+  const result: PostDeployJobRunResult = await migration.run(systemRepo, job, job.data);
+
+  switch (result) {
+    case 'ineligible': {
+      await moveToDelayedAndThrow(job, 'Post-deploy migration delayed since worker is not eligible to execute it');
+      break;
+    }
+    case 'finished':
+    case 'interrupted':
+      break;
+    default:
+      result satisfies never;
+      throw new Error(`Unexpected PostDeployMigration.run(${migrationNumber}) result: ${result}`);
+  }
+}
+
+async function runDynamicMigration(
+  exec: AsyncJobExecutor,
+  job: Job<DynamicPostDeployJobData>
+): Promise<PostDeployJobRunResult> {
+  const asyncJob = exec.getAsyncJob();
+  const results: MigrationActionResult[] = [];
+  try {
+    const shardId = job.data.target.shardId;
+    await withLongRunningDatabaseClient(
+      async (client) => {
+        if (job.data.migrationActions.preDeploy.length) {
+          await executeMigrationActions(client, results, job.data.migrationActions.preDeploy);
+        }
+        if (job.data.migrationActions.postDeploy.length) {
+          await executeMigrationActions(client, results, job.data.migrationActions.postDeploy);
+        }
+      },
+      { shardId }
+    );
+    const output = getAsyncJobOutputFromMigrationActionResults(results);
+    await completePostDeployMigration(exec, shardId, output);
+  } catch (err: any) {
+    const errorMsg = normalizeErrorString(err);
+    globalLogger.error('Post-deploy migration threw an error', {
+      error: errorMsg,
+      asyncJob: getReferenceString(asyncJob),
+      type: job.data.type,
+      dataVersion: asyncJob.dataVersion,
+    });
+    await exec.failJob(err);
+  }
+  return 'finished';
+}
+
+export async function runCustomMigration(
+  systemRepo: SystemRepository,
+  job: Job<CustomPostDeployMigrationJobData> | undefined,
+  jobData: CustomPostDeployMigrationJobData,
+  callback: (
+    client: PoolClient,
+    results: MigrationActionResult[],
+    job: Job<CustomPostDeployMigrationJobData> | undefined,
+    jobData: CustomPostDeployMigrationJobData
+  ) => Promise<void>
+): Promise<PostDeployJobRunResult> {
+  const exec = await getTrackingAsyncJobExecutor(jobData.tracking);
+  const asyncJob = exec.getAsyncJob();
+
+  const shardId = jobData.target.shardId;
+  if (jobData.skipInFirstBootMode && (await isFirstBootMode(getDatabasePool(DatabaseMode.WRITER, shardId)))) {
+    globalLogger.info('Skipping custom post-deploy migration since server is in firstBoot mode', {
+      asyncJob: getReferenceString(asyncJob),
+      version: `v${asyncJob.dataVersion}`,
+    });
+    await completePostDeployMigration(exec, shardId, {
+      resourceType: 'Parameters',
+      parameter: [{ name: 'skipped', valueString: 'In firstBoot mode' }],
+    });
+    return 'finished';
+  }
+
+  const results: MigrationActionResult[] = [];
+  try {
+    await withLongRunningDatabaseClient(
+      async (client) => {
+        await callback(client, results, job, jobData);
+      },
+      { shardId }
+    );
+    const output = getAsyncJobOutputFromMigrationActionResults(results);
+    await completePostDeployMigration(exec, shardId, output);
+  } catch (err: any) {
+    const errorMsg = normalizeErrorString(err);
+    globalLogger.error('Post-deploy migration threw an error', {
+      error: errorMsg,
+      asyncJob: getReferenceString(asyncJob),
+      type: jobData.type,
+      dataVersion: asyncJob.dataVersion,
+    });
+    const output = getAsyncJobOutputFromMigrationActionResults(results);
+    await exec.failJob(err, output);
+  }
+  return 'finished';
+}
+
+function getAsyncJobOutputFromMigrationActionResults(results: MigrationActionResult[]): Parameters {
+  return {
+    resourceType: 'Parameters',
+    parameter: results.map((r) => {
+      const { name, durationMs, ...rest } = r;
+      const part: ParametersParameter[] = [
+        {
+          name: 'durationMs',
+          valueInteger: durationMs,
+        },
+      ];
+      for (const [name, value] of Object.entries(rest)) {
+        const typedValue = toTypedValue(value);
+        if (typedValue.type === 'undefined') {
+          continue;
+        }
+        if ([PropertyType.integer, PropertyType.decimal, PropertyType.boolean].includes(typedValue.type as any)) {
+          part.push({
+            name: name,
+            ['value' + capitalize(typedValue.type)]: value,
+          });
+        } else {
+          part.push({
+            name: name,
+            valueString: value?.toString(),
+          });
+        }
+      }
+
+      return {
+        name,
+        part,
+      };
+    }),
+  };
+}
+
+export function prepareCustomMigrationJobData(ctx: PrepareJobDataContext): CustomPostDeployMigrationJobData {
+  const requestCtx = tryGetRequestContext();
+  return {
+    target: { kind: 'shard', shardId: ctx.shardId },
+    tracking: getAsyncJobTracking(ctx.asyncJob),
+    type: 'custom',
+    requestId: requestCtx?.requestId,
+    traceId: requestCtx?.traceId,
+  };
+}
+
+export function prepareDynamicMigrationJobData(
+  ctx: PrepareJobDataContext,
+  migrationActions: PhasalMigration
+): DynamicPostDeployJobData {
+  const requestCtx = tryGetRequestContext();
+  return {
+    target: { kind: 'shard', shardId: ctx.shardId },
+    tracking: getAsyncJobTracking(ctx.asyncJob),
+    type: 'dynamic',
+    migrationActions,
+    requestId: requestCtx?.requestId,
+    traceId: requestCtx?.traceId,
+  };
+}
+
+export async function addPostDeployMigrationJobData<T extends PostDeployJobData>(
+  jobData: T,
+  options?: JobsOptions
+): Promise<Job<T> | undefined> {
+  const queue = queueRegistry.get<PostDeployJobData>(PostDeployMigrationQueueName);
+  if (!queue) {
+    throw new Error(`Job queue ${PostDeployMigrationQueueName} not available`);
+  }
+
+  const job = await queue.add('PostDeployMigrationJobData', jobData, options);
+
+  globalLogger.debug('Added post-deploy migration job', {
+    jobId: job.id,
+    ...getJobDataLoggingFields(job),
+  });
+
+  return job as Job<T>;
+}

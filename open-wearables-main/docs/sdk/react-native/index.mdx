@@ -1,0 +1,305 @@
+---
+title: "React Native Wearables SDK"
+sidebarTitle: "Overview"
+description: "React Native SDK for background sync from HealthKit and Health Connect. TypeScript API via Expo Module API, wrapping native iOS and Android SDKs."
+keywords: ["react native wearables sdk", "react native healthkit", "react native health connect", "react native health data"]
+"og:title": "React Native Wearables SDK | Open Wearables"
+"og:description": "Background sync from HealthKit and Health Connect in React Native. TypeScript API via Expo Module API, wrapping native SDKs."
+"og:url": "https://docs.openwearables.io/sdk/react-native"
+"og:type": "article"
+"twitter:title": "React Native Wearables SDK | Open Wearables"
+"twitter:description": "Background sync from HealthKit and Health Connect in React Native. TypeScript API via Expo Module API, wrapping native SDKs."
+"twitter:card": "summary_large_image"
+---
+
+## Introduction
+
+The Open Wearables React Native SDK (`open-wearables`) enables secure background synchronization of health data from **Apple HealthKit** (iOS), **Samsung Health**, and **Health Connect** (Android) to the Open Wearables platform.
+
+The SDK is built with the [Expo Module API](https://docs.expo.dev/modules/module-api/), so it works in Expo projects as well as in bare React Native projects with Expo modules installed.
+
+On iOS, the React Native SDK is a **wrapper around the [native iOS SDK](/sdk/ios)** (`open_wearables_ios_sdk`). On Android, it wraps the **[native Android SDK](/sdk/android)** (`open_wearables_android_sdk`). This means all the core sync logic — background execution, streaming uploads, secure storage, and retry mechanisms — is handled by the native implementations under the hood. The React Native layer provides a convenient TypeScript API for cross-platform apps.
+
+<CardGroup cols={3}>
+  <Card title="React Native SDK Repository" icon="github" href="https://github.com/the-momentum/open-wearables-react-native-sdk">
+    View source code, report issues, and contribute to the React Native SDK.
+  </Card>
+  <Card title="Native iOS SDK" icon="apple" href="/sdk/ios">
+    See the native iOS SDK documentation for the underlying iOS implementation.
+  </Card>
+  <Card title="Native Android SDK" icon="android" href="/sdk/android">
+    See the native Android SDK documentation for the underlying Android implementation.
+  </Card>
+</CardGroup>
+
+## Features
+
+- **Cross-Platform** - Single TypeScript API for iOS (HealthKit) and Android (Samsung Health, Health Connect)
+- **Background Sync** - Health data syncs even when your app is in the background
+- **Incremental Updates** - Only syncs new data using anchored queries
+- **Secure Storage** - Credentials stored in iOS Keychain / Android EncryptedSharedPreferences
+- **Dual Authentication** - Token-based auth with auto-refresh or API key authentication
+- **Resumable Sessions** - Sync sessions survive app restarts
+- **Wide Data Support** - Steps, heart rate, workouts, sleep, and 40+ data types
+- **Provider Selection** - Choose between Samsung Health and Health Connect on Android
+
+## Requirements
+
+<Tabs>
+  <Tab title="iOS">
+    | Requirement | Details |
+    |-------------|---------|
+    | iOS Version | iOS 15.1+ |
+    | Apple Developer Account | Required for the HealthKit entitlement |
+    | Physical Device | HealthKit doesn't work in the iOS Simulator |
+  </Tab>
+  <Tab title="Android">
+    | Requirement | Details |
+    |-------------|---------|
+    | Min SDK | Android 10 (API 29+) |
+    | Health Connect or Samsung Health | Installed on the device |
+  </Tab>
+  <Tab title="React Native">
+    | Requirement | Details |
+    |-------------|---------|
+    | Expo | Built and tested with Expo SDK 54 / React Native 0.81 |
+    | Bare React Native | Requires [Expo modules](https://docs.expo.dev/bare/installing-expo-modules/) |
+  </Tab>
+</Tabs>
+
+## Installation
+
+<Warning>
+  **Temporary setup.** The package is not published to npm yet, and its Android native dependency is only available through Maven Local. We're working on publishing the package to npm and serving the Android dependency from a public repository - steps 1 and 3 below will then become a plain `npm install`.
+</Warning>
+
+<Steps>
+  <Step title="Install the package from GitHub">
+    ```bash
+    npm install github:the-momentum/open-wearables-react-native-sdk#<commit-sha>
+    ```
+
+    npm builds the package during install. Pin a commit so updates are deliberate. The package is imported as `open-wearables`.
+  </Step>
+
+  <Step title="Add the config plugin">
+    Required for Expo projects - it sets the iOS HealthKit entitlements, `Info.plist` keys and background modes, and the Android Health Connect activity aliases. Set the Android `minSdkVersion` in the same file, which needs `expo-build-properties`:
+
+    ```bash
+    npx expo install expo-build-properties
+    ```
+
+    ```json app.json
+    {
+      "expo": {
+        "plugins": [
+          [
+            "open-wearables",
+            {
+              "healthShareUsage": "Allow $(PRODUCT_NAME) to read your health data.",
+              "healthUpdateUsage": "Allow $(PRODUCT_NAME) to write health data."
+            }
+          ],
+          ["expo-build-properties", { "android": { "minSdkVersion": 29 } }]
+        ]
+      }
+    }
+    ```
+
+    Bare React Native projects set these by hand - see [Expo and bare React Native setup](/sdk/react-native/integration#expo-and-bare-react-native-setup).
+  </Step>
+
+  <Step title="Android: publish the native SDK to Maven Local">
+    ```bash
+    git clone https://github.com/the-momentum/open_wearables_android_sdk
+    cd open_wearables_android_sdk
+    git checkout v0.11.2
+    ./gradlew publishToMavenLocal
+    ```
+
+    This also installs the Samsung Health SDK the native SDK depends on. Then run `npx expo prebuild` in your app and add `mavenLocal()` as the **first** repository in `android/build.gradle`:
+
+    ```gradle android/build.gradle
+    allprojects {
+      repositories {
+        mavenLocal()
+        // ...
+      }
+    }
+    ```
+
+    Repeat this on every machine that builds the app, including CI. `npx expo prebuild --clean` regenerates `android/`, so add `mavenLocal()` again afterwards.
+  </Step>
+
+  <Step title="Build and run">
+    ```bash
+    npx expo run:ios
+    npx expo run:android
+    ```
+
+    Bare React Native: run `npx pod-install` before building for iOS.
+  </Step>
+</Steps>
+
+## Quick Start
+
+The minimal flow - see the [Integration Guide](/sdk/integration) for when to call what:
+
+```ts
+import OpenWearablesHealthSDK, { HealthDataType } from "open-wearables";
+
+// Every app launch
+OpenWearablesHealthSDK.configure("https://api.your-open-wearables.com");
+
+// Once per user, with tokens from your backend
+await OpenWearablesHealthSDK.signIn(userId, accessToken, refreshToken, null);
+
+// Android only
+OpenWearablesHealthSDK.setProvider("google");
+
+await OpenWearablesHealthSDK.requestAuthorization([HealthDataType.Steps, HealthDataType.HeartRate, HealthDataType.Sleep]);
+await OpenWearablesHealthSDK.startBackgroundSync(90);
+```
+
+## Events
+Subscribe to native SDK events using the standard Expo module event emitter:
+
+```TypeScript
+
+  const subscription = OpenWearablesHealthSDK.addListener("onLog", ({ message }) => {
+    console.log("SDK log:", message);
+  });
+
+  const authSub = OpenWearablesHealthSDK.addListener(
+    "onAuthError",
+    ({ statusCode, message }) => {
+      console.error(`Auth error ${statusCode}:`, message);
+    }
+  );
+
+  // Clean up
+  subscription.remove();
+  authSub.remove();
+
+```
+
+| Event         | Payload                                   | Description                            |
+| ------------- | ----------------------------------------- | -------------------------------------- |
+| `onLog`       | `{ message: string }`                     | Log messages emitted by the native SDK |
+| `onAuthError` | `{ statusCode: number, message: string }` | Authentication errors                  |
+
+## Documentation
+
+<CardGroup cols={2}>
+  <Card title="Integration Guide" icon="book" href="/sdk/integration">
+    Authentication, backend endpoint, and SDK lifecycle - the same for every SDK.
+  </Card>
+  <Card title="React Native calls" icon="code" href="/sdk/react-native/integration">
+    The React Native code for each integration step, plus Expo setup.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/sdk/react-native/troubleshooting">
+    Common issues and their solutions for iOS and Android.
+  </Card>
+</CardGroup>
+
+## Supported Health Data Types
+
+The SDK supports 40+ health data types across multiple categories:
+
+<AccordionGroup>
+  <Accordion title="Activity & Fitness">
+    | Type | Description |
+    |------|-------------|
+    | `steps` | Step count |
+    | `distanceWalkingRunning` | Walking/running distance |
+    | `distanceCycling` | Cycling distance |
+    | `flightsClimbed` | Floors climbed |
+    | `walkingSpeed` | Average walking speed |
+    | `walkingStepLength` | Step length |
+    | `walkingAsymmetryPercentage` | Walking asymmetry percentage |
+    | `walkingDoubleSupportPercentage` | Walking double support percentage |
+    | `sixMinuteWalkTestDistance` | 6-minute walk test |
+    | `activeEnergy` | Active energy burned |
+    | `basalEnergy` | Basal (resting) energy burned |
+  </Accordion>
+
+  <Accordion title="Heart & Vitals">
+    | Type | Description |
+    |------|-------------|
+    | `heartRate` | Heart rate measurements |
+    | `restingHeartRate` | Resting heart rate |
+    | `heartRateVariabilitySDNN` | HRV (SDNN) |
+    | `vo2Max` | VO2 max |
+    | `oxygenSaturation` | Blood oxygen |
+    | `respiratoryRate` | Breathing rate |
+  </Accordion>
+
+  <Accordion title="Body Measurements">
+    | Type | Description |
+    |------|-------------|
+    | `bodyMass` | Weight |
+    | `height` | Height |
+    | `bmi` | Body Mass Index |
+    | `bodyFatPercentage` | Body fat % |
+    | `leanBodyMass` | Lean body mass |
+    | `waistCircumference` | Waist circumference |
+    | `bodyTemperature` | Body temperature |
+  </Accordion>
+
+  <Accordion title="Blood & Metabolic">
+    | Type | Description |
+    |------|-------------|
+    | `bloodGlucose` | Blood glucose level |
+    | `insulinDelivery` | Insulin delivery |
+    | `bloodPressureSystolic` | Systolic blood pressure |
+    | `bloodPressureDiastolic` | Diastolic blood pressure |
+    | `bloodPressure` | Blood pressure (correlation type) |
+  </Accordion>
+
+  <Accordion title="Sleep & Mindfulness">
+    | Type | Description |
+    |------|-------------|
+    | `sleep` | Sleep sessions and stages |
+    | `mindfulSession` | Meditation/mindfulness sessions |
+  </Accordion>
+
+  <Accordion title="Reproductive Health">
+    | Type | Description |
+    |------|-------------|
+    | `menstrualFlow` | Menstrual flow |
+    | `cervicalMucusQuality` | Cervical mucus quality |
+    | `ovulationTestResult` | Ovulation test result |
+    | `sexualActivity` | Sexual activity |
+  </Accordion>
+
+  <Accordion title="Nutrition">
+    | Type | Description |
+    |------|-------------|
+    | `dietaryEnergyConsumed` | Calories consumed |
+    | `dietaryCarbohydrates` | Carbs |
+    | `dietaryProtein` | Protein |
+    | `dietaryFatTotal` | Total fat |
+    | `dietaryWater` | Water intake |
+  </Accordion>
+
+  <Accordion title="Workouts">
+    | Type | Description |
+    |------|-------------|
+    | `workout` | All workout types with metadata |
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Not all data types are available on all providers. Samsung Health supports a subset of types compared to Health Connect and HealthKit. See the [Android SDK docs](/sdk/android) for provider-specific availability.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Integration Guide" icon="arrow-right" href="/sdk/react-native/integration">
+    Complete step-by-step integration guide.
+  </Card>
+  <Card title="API Reference" icon="code" href="https://github.com/the-momentum/open-wearables-react-native-sdk">
+    Full API documentation on GitHub.
+  </Card>
+</CardGroup>

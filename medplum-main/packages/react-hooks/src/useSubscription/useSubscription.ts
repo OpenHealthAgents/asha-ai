@@ -1,0 +1,173 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import type { SubscriptionEmitter, SubscriptionEventMap } from '@medplum/core';
+import { deepEquals } from '@medplum/core';
+import type { Bundle, Subscription } from '@medplum/fhirtypes';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useMedplum, useMedplumProfile } from '../MedplumProvider/MedplumProvider.context';
+import { useStabilizedCallback } from '../useStabilizedCallback/useStabilizedCallback';
+
+const SUBSCRIPTION_DEBOUNCE_MS = 3000;
+
+export type UseSubscriptionOptions = {
+  subscriptionProps?: Partial<Subscription>;
+  onWebSocketOpen?: () => void;
+  onWebSocketClose?: () => void;
+  onSubscriptionConnect?: (subscriptionId: string) => void;
+  onSubscriptionDisconnect?: (subscriptionId: string) => void;
+  onError?: (err: Error) => void;
+};
+
+/**
+ * Creates an in-memory `Subscription` resource with the given criteria on the Medplum server and calls the given callback when an event notification is triggered by a resource interaction over a WebSocket connection.
+ *
+ * Subscriptions created with this hook are lightweight, share a single WebSocket connection, and are automatically untracked and cleaned up when the containing component is no longer mounted.
+ *
+ * @param criteria - The FHIR search criteria to subscribe to.
+ * @param callback - The callback to call when a notification event `Bundle` for this `Subscription` is received.
+ * @param options - Optional options used to configure the created `Subscription`. See {@link UseSubscriptionOptions}
+ *
+ * --------------------------------------------------------------------------------------------------------------------------------
+ *
+ * `options` contains the following properties, all of which are optional:
+ * - `subscriptionProps` - Allows the caller to pass a `Partial<Subscription>` to use as part of the creation
+ * of the `Subscription` resource for this subscription. It enables the user namely to pass things like the `extension` property and to create
+ * the `Subscription` with extensions such the {@link https://www.medplum.com/docs/subscriptions/subscription-extensions#interactions | Supported Interaction} extension which would enable to listen for `create` or `update` only events.
+ * - `onWebsocketOpen` - Called when the WebSocket connection is established with Medplum server.
+ * - `onWebsocketClose` - Called when the WebSocket connection disconnects.
+ * - `onSubscriptionConnect` - Called when the corresponding subscription starts to receive updates after the subscription has been initialized and connected to.
+ * - `onSubscriptionDisconnect` - Called when the corresponding subscription is destroyed and stops receiving updates from the server.
+ * - `onError` - Called whenever an error occurs during the lifecycle of the managed subscription.
+ */
+export function useSubscription(
+  criteria: string | undefined,
+  callback: (bundle: Bundle) => void,
+  options?: UseSubscriptionOptions
+): void {
+  const medplum = useMedplum();
+  const project = medplum.getProject();
+  const profile = useMedplumProfile();
+
+  // When the user is not authenticated, the subscription becomes a no-op. Subscribing would
+  // create a `Subscription` resource and request a WebSocket binding token, both of which 401
+  // without a profile. Also disabled when the active project does not have the feature flag.
+  const enabled = profile && project?.features?.includes('websocket-subscriptions');
+
+  // Treating criteria as `undefined` skips all subscription work; when the
+  // user authenticates, `profile` changes and the effect re-runs to subscribe.
+  const effectiveCriteria = enabled ? criteria : undefined;
+  const [emitter, setEmitter] = useState<SubscriptionEmitter>();
+  // We don't memoize the entire options object since it contains callbacks and if the callbacks change identity, we don't want to trigger a resubscribe to criteria
+  const [memoizedSubProps, setMemoizedSubProps] = useState(options?.subscriptionProps);
+
+  const listeningRef = useRef(false);
+  const unsubTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const prevCriteriaRef = useRef<string | undefined>(undefined);
+  const prevMemoizedSubPropsRef = useRef<UseSubscriptionOptions['subscriptionProps']>(undefined);
+
+  useEffect(() => {
+    // Deep equals checks referential equality first
+    if (!deepEquals(options?.subscriptionProps, memoizedSubProps)) {
+      setMemoizedSubProps(options?.subscriptionProps);
+    }
+  }, [memoizedSubProps, options]);
+
+  useEffect(() => {
+    if (unsubTimerRef.current) {
+      clearTimeout(unsubTimerRef.current);
+      unsubTimerRef.current = undefined;
+    }
+
+    let shouldSubscribe = false;
+    if (
+      prevCriteriaRef.current !== effectiveCriteria ||
+      !deepEquals(prevMemoizedSubPropsRef.current, memoizedSubProps)
+    ) {
+      shouldSubscribe = true;
+    }
+
+    if (shouldSubscribe && prevCriteriaRef.current) {
+      medplum.unsubscribeFromCriteria(prevCriteriaRef.current, prevMemoizedSubPropsRef.current);
+    }
+
+    // Set prev criteria and options to latest after checking them
+    prevCriteriaRef.current = effectiveCriteria;
+    prevMemoizedSubPropsRef.current = memoizedSubProps;
+
+    // We do this after as to not immediately trigger re-render
+    if (shouldSubscribe && effectiveCriteria) {
+      setEmitter(medplum.subscribeToCriteria(effectiveCriteria, memoizedSubProps));
+    } else if (!effectiveCriteria) {
+      setEmitter(undefined);
+    }
+
+    return () => {
+      unsubTimerRef.current = setTimeout(() => {
+        if (effectiveCriteria) {
+          medplum.unsubscribeFromCriteria(effectiveCriteria, memoizedSubProps);
+        }
+      }, SUBSCRIPTION_DEBOUNCE_MS);
+    };
+  }, [medplum, effectiveCriteria, memoizedSubProps]);
+
+  // Stabilize input callbacks
+  const handleMessage = useStabilizedCallback(callback);
+  const handleWebSocketOpen = useStabilizedCallback(options?.onWebSocketOpen);
+  const handleWebSocketClose = useStabilizedCallback(options?.onWebSocketClose);
+  const handleSubscriptionConnect = useStabilizedCallback(options?.onSubscriptionConnect);
+  const handleSubscriptionDisconnect = useStabilizedCallback(options?.onSubscriptionDisconnect);
+  const handleError = useStabilizedCallback(options?.onError);
+
+  // Explicitly choose parameters forwarded to event callbacks
+  const onMessage = useCallback(
+    (event: SubscriptionEventMap['message']) => handleMessage(event.payload),
+    [handleMessage]
+  );
+
+  const onWebSocketOpen = useCallback(
+    (_event: SubscriptionEventMap['open']) => handleWebSocketOpen(),
+    [handleWebSocketOpen]
+  );
+
+  const onWebSocketClose = useCallback(
+    (_event: SubscriptionEventMap['close']) => handleWebSocketClose(),
+    [handleWebSocketClose]
+  );
+
+  const onSubscriptionConnect = useCallback(
+    (event: SubscriptionEventMap['connect']) => handleSubscriptionConnect(event.payload.subscriptionId),
+    [handleSubscriptionConnect]
+  );
+
+  const onSubscriptionDisconnect = useCallback(
+    (event: SubscriptionEventMap['disconnect']) => handleSubscriptionDisconnect(event.payload.subscriptionId),
+    [handleSubscriptionDisconnect]
+  );
+
+  const onError = useCallback((event: SubscriptionEventMap['error']) => handleError(event.payload), [handleError]);
+
+  useEffect(() => {
+    if (!emitter) {
+      return () => undefined;
+    }
+    if (!listeningRef.current) {
+      emitter.addEventListener('message', onMessage);
+      emitter.addEventListener('open', onWebSocketOpen);
+      emitter.addEventListener('close', onWebSocketClose);
+      emitter.addEventListener('connect', onSubscriptionConnect);
+      emitter.addEventListener('disconnect', onSubscriptionDisconnect);
+      emitter.addEventListener('error', onError);
+      listeningRef.current = true;
+    }
+    return () => {
+      listeningRef.current = false;
+      emitter.removeEventListener('message', onMessage);
+      emitter.removeEventListener('open', onWebSocketOpen);
+      emitter.removeEventListener('close', onWebSocketClose);
+      emitter.removeEventListener('connect', onSubscriptionConnect);
+      emitter.removeEventListener('disconnect', onSubscriptionDisconnect);
+      emitter.removeEventListener('error', onError);
+    };
+  }, [emitter, onMessage, onWebSocketOpen, onWebSocketClose, onSubscriptionConnect, onSubscriptionDisconnect, onError]);
+}

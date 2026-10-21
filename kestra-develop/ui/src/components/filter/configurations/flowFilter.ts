@@ -1,0 +1,67 @@
+import {computed, ComputedRef} from "vue"
+import {FilterConfiguration, Comparators} from "@kestra-io/design-system"
+import {useValues} from "../composables/useValues"
+import {useI18n} from "vue-i18n"
+import {useRoute} from "vue-router"
+import {labelComparatorLabels} from "./labelComparatorLabels"
+import {routeFamily} from "../../../utils/routeFamily"
+import {namespaceValueProvider} from "./namespaceValueProvider"
+
+export const useFlowFilter = (): ComputedRef<FilterConfiguration> => {
+    const {t} = useI18n()
+    const route = useRoute()
+
+    return computed(() => {
+        return {
+            title: t("filter.titles.flow_filters"),
+            searchPlaceholder: t("filter.search_placeholders.search_flows"),
+            keys: [
+                ...(routeFamily(route.name) !== "namespaces/update" ? [
+                    {
+                        key: "namespace",
+                        label: t("filter.namespace.label"),
+                        description: t("filter.namespace.description"),
+                        comparators: [
+                            Comparators.IN,
+                            Comparators.NOT_IN,
+                            Comparators.CONTAINS,
+                            Comparators.PREFIX,
+                        ],
+                        valueType: "multi-select" as const,
+                        valueProvider: namespaceValueProvider(),
+                        searchable: true,
+                    },
+                ] : []) as FilterConfiguration["keys"],
+                {
+                    key: "scope",
+                    label: t("filter.scope_flow.label"),
+                    description: t("filter.scope_flow.description"),
+                    comparators: [Comparators.EQUALS, Comparators.NOT_EQUALS],
+                    valueType: "radio",
+                    valueProvider: async () => {
+                        const {VALUES} = useValues("flows")
+                        return VALUES.SCOPES
+                    },
+                    showComparatorSelection: false,
+                },
+                {
+                    key: "labels",
+                    label: t("filter.labels_flow.label"),
+                    description: t("filter.labels_flow.description"),
+                    comparators: [
+                        Comparators.IN,
+                        Comparators.NOT_IN,
+                        Comparators.EQUALS,
+                        Comparators.CONTAINS,
+                        Comparators.NOT_CONTAINS,
+                        Comparators.IS_NOT_NULL,
+                        Comparators.IS_NULL,
+                    ],
+                    comparatorLabels: labelComparatorLabels(t),
+                    valueType: "key-value",
+                    showComparatorSelection: true,
+                },
+            ],
+        }
+    })
+}

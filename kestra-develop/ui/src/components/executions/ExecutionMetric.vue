@@ -1,0 +1,84 @@
+<template>
+    <MetricsTable
+        v-if="executionsStore.execution"
+        ref="table"
+        :taskRunId="taskRunId"
+        :showTask="true"
+        :execution="executionsStore.execution"
+        :optionalColumns="optionalColumns"
+    >
+        <template #navbar>
+            <LoopIterationsNotice kind="metrics" />
+            <KSFilter
+                :configuration="metricFilter"
+                :properties="{
+                    shown: true,
+                    columns: optionalColumns,
+                    displayColumns: table?.displayColumns,
+                    storageKey: 'execution-metrics'
+                }"
+                :prefix="'execution-metrics'"
+                :tableOptions="{
+                    chart: {shown: false},
+                    refresh: {shown: true, callback: refresh}
+                }"
+                @update-properties="updateDisplayColumns"
+            />
+        </template>
+    </MetricsTable>
+</template>
+<script setup lang="ts">
+    import {computed, ref} from "vue"
+    import {useI18n} from "vue-i18n"
+    import {useRoute} from "vue-router"
+    import {useExecutionsStore} from "../../stores/executions"
+    import {useMetricFilter} from "../filter/configurations/metricFilters"
+    import MetricsTable from "../executions/MetricsTable.vue"
+    import LoopIterationsNotice from "./LoopIterationsNotice.vue"
+    import {KsFilter as KSFilter} from "@kestra-io/design-system"
+
+    const {t} = useI18n()
+    const route = useRoute()
+    const executionsStore = useExecutionsStore()
+
+    const metricFilter = useMetricFilter()
+
+    const table = ref<InstanceType<typeof MetricsTable>>()
+
+    const taskRunId = computed(() => route.query["filters[metric][EQUALS]"] as string | undefined)
+
+    const optionalColumns = ref([
+        {
+            label: t("task"),
+            prop: "taskId",
+            default: true,
+            description: t("filter.table_column.metrics.task"),
+        },
+        {
+            label: t("name"),
+            prop: "name",
+            default: true,
+            description: t("filter.table_column.metrics.name"),
+        },
+        {
+            label: t("value"),
+            prop: "value",
+            default: true,
+            description: t("filter.table_column.metrics.value"),
+        },
+        {
+            label: t("tags"),
+            prop: "tags",
+            default: true,
+            description: t("filter.table_column.metrics.tags"),
+        },
+    ])
+
+    const updateDisplayColumns = (newColumns: string[]) => {
+        table.value?.updateDisplayColumns(newColumns)
+    }
+
+    const refresh = () => {
+        table.value?.reload()
+    }
+</script>

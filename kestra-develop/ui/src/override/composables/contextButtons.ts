@@ -1,0 +1,125 @@
+import type {Component} from "vue"
+import {computed} from "vue"
+import {useRoute} from "vue-router"
+
+import {useI18n} from "vue-i18n"
+
+import {useNetwork, useStorage} from "@vueuse/core"
+const {isOnline} = useNetwork()
+
+import ContextNews from "../../components/layout/ContextNews.vue"
+import ContextDocs from "../../components/docs/ContextDocs.vue"
+import ContextNotifications from "../../components/layout/ContextNotifications.vue"
+import CopilotChat from "../../components/ai/copilot/CopilotChat.vue"
+import AiIcon from "../../components/ai/AiIcon.vue"
+import {useApiStore} from "../../stores/api"
+import {useNotificationsStore} from "../../stores/notifications"
+
+import MessageOutline from "vue-material-design-icons/MessageOutline.vue"
+import FileDocument from "vue-material-design-icons/FileDocument.vue"
+import Slack from "vue-material-design-icons/Slack.vue"
+import Github from "vue-material-design-icons/Github.vue"
+import Calendar from "vue-material-design-icons/Calendar.vue"
+import Star from "vue-material-design-icons/Star.vue"
+import BellOutline from "vue-material-design-icons/BellOutline.vue"
+import {storageKeys} from "../../utils/constants"
+
+export interface Button {
+    title: string;
+    icon?: Component;
+
+    component?: Component;
+    hasUnreadMarker?: boolean;
+    unread?: {readonly value: boolean};
+    hidden?: boolean;
+    /** Opened programmatically as a stripless panel (never a tab), e.g. the notifications bell. */
+    panelOnly?: boolean;
+
+    url?: string;
+}
+
+export function useContextButtons() {
+    const {t} = useI18n({useScope: "global"})
+    const route = useRoute()
+
+    const apiStore = useApiStore()
+    const lastNewsReadDate = useStorage<string | null>(storageKeys.LAST_NEWS_READ_DATE, null)
+    const newsUnread = computed<boolean>(() => {
+        const feeds = apiStore.feeds
+        return Boolean(
+            lastNewsReadDate.value === null ||
+            (feeds?.[0] && (new Date(lastNewsReadDate.value) < new Date(feeds[0].publicationDate))),
+        )
+    })
+
+    const notificationsStore = useNotificationsStore()
+    const notificationsUnread = computed<boolean>(() => notificationsStore.unreadCount > 0)
+
+    const buttons: Record<string, Button> = isOnline.value
+        ? {
+              ai: {
+                  title: t("contextBar.ai"),
+                  icon: AiIcon,
+
+                  component: CopilotChat,
+                  // The full-page AI Copilot (`/ai`) is the same agent — hide the redundant dock tab there.
+                  get hidden() {
+                      return route.name === "ai"
+                  },
+              },
+              news: {
+                  title: t("contextBar.news"),
+                  icon: MessageOutline,
+
+                  component: ContextNews,
+                  hasUnreadMarker: true,
+                  unread: newsUnread,
+              },
+              // NotificationBell.vue (in the top nav bar) is the entry point for this panel and
+              // owns the unread badge + badge polling — kept resolvable here (ContextDrawer still
+              // needs the component/title for panel content) but hidden from the visible tab strip.
+              notifications: {
+                  title: t("contextBar.notifications"),
+                  icon: BellOutline,
+                  component: ContextNotifications,
+                  hasUnreadMarker: true,
+                  unread: notificationsUnread,
+                  hidden: true,
+                  panelOnly: true,
+              },
+              docs: {
+                  title: t("contextBar.docs"),
+                  icon: FileDocument,
+
+                  component: ContextDocs,
+                  hasUnreadMarker: false,
+              },
+              help: {
+                  title: t("contextBar.help"),
+                  icon: Slack,
+
+                  url: "https://kestra.io/slack?utm_source=app&utm_medium=referral&utm_campaign=context-bar",
+              },
+              issue: {
+                  title: t("contextBar.issue"),
+                  icon: Github,
+
+                  url: "https://github.com/kestra-io/kestra/issues/new/choose",
+              },
+              demo: {
+                  title: t("contextBar.demo"),
+                  icon: Calendar,
+
+                  url: "https://kestra.io/demo",
+              },
+              star: {
+                  title: t("contextBar.star"),
+                  icon: Star,
+
+                  url: "https://github.com/kestra-io/kestra?utm_source=app&utm_medium=referral&utm_campaign=context-bar",
+              },
+          }
+        : {}
+
+    return {buttons}
+}

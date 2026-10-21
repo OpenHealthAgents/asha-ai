@@ -1,0 +1,363 @@
+/**
+ * DoctorProfileForm — unified create/edit shell for the practitioner FHIR profile.
+ *
+ * Layer: client / telemedicine / doctor / forms
+ *
+ * Thin orchestration layer — owns:
+ *   - Form instance setup (react-hook-form + zod resolver)
+ *   - Sequential upsert submit pipeline
+ *   - Language diff (add new codes, delete removed codes)
+ *   - Page layout and sticky submit bar
+ *
+ * All field rendering lives in the section components under ./sections/.
+ * Schema and default derivation live in ./schema.ts.
+ *
+ * Submit pipeline (create mode):
+ *   1. createPractitionerFullAction — single atomic call that creates the
+ *      practitioner + name + telecoms + address + communications in one
+ *      DB transaction (POST /practitioners/full).
+ *
+ * Submit pipeline (edit mode):
+ *   1. updatePractitionerFullAction — single atomic call that updates scalar fields
+ *      + replaces name / telecom / address / communications arrays in one DB
+ *      transaction (PATCH /practitioners/{id}/full).
+ *
+ * Key schema note:
+ *   - `prefix` is submitted as string[] (wrapped from the single form string)
+ *
+ * Photo upload:
+ *   Handled independently of form submit via DoctorProfilePhotoUpload, which
+ *   uploads immediately on file selection and writes to practitioner.photo[].
+ *   Requires a FileNestProvider wrapping this component (set up here).
+ */
+
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { format } from "date-fns";
+import { toast } from "sonner";
+import { CircleAlert, Loader2 } from "lucide-react";
+import { FileNestProvider } from "@filenest-fs/react";
+
+import { Button } from "@/components/ui/button";
+import { Form } from "@/components/ui/form";
+
+import {
+  createPractitionerFullAction,
+  updatePractitionerFullAction,
+} from "@/modules/server/presentation/actions/practitioner";
+import { handleZSAError } from "@/modules/client/shared/error/handleZSAError";
+import { useFileNestTokenFetcher } from "@/modules/client/shared/hooks/useFileNestTokenFetcher";
+import { DoctorProfilePhotoUpload } from "@/modules/client/telemedicine/doctor/component/profile/DoctorProfilePhotoUpload";
+
+import {
+  DoctorProfileFormSchema,
+  deriveDefaults,
+  type TDoctorProfileForm,
+} from "./schema";
+import { PersonalDetailsSection } from "./sections/PersonalDetailsSection";
+import { ContactSection } from "./sections/ContactSection";
+import { AddressSection } from "./sections/AddressSection";
+import { LanguagesSection } from "./sections/LanguagesSection";
+import type { DoctorProfileFormProps } from "./types";
+
+/**
+ * Single-page doctor profile form for both initial setup and ongoing edits.
+ *
+ * @param initialPractitioner - Existing practitioner data or null (create mode).
+ * @param userId              - The signed-in user's ID.
+ * @param orgId               - The active organisation ID.
+ */
+export function DoctorProfileForm({
+  initialPractitioner,
+  userId,
+  orgId,
+}: DoctorProfileFormProps) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const isCreateMode = initialPractitioner === null;
+  const [isSaving, setIsSaving] = useState(false);
+
+  const form = useForm<TDoctorProfileForm>({
+    resolver: zodResolver(DoctorProfileFormSchema),
+    defaultValues: deriveDefaults(initialPractitioner),
+  });
+
+  // ── Submit handler ────────────────────────────────────────────────────────────
+
+  /**
+   * Sequential upsert pipeline. Returns early on the first error.
+   * Errors are surfaced via handleZSAError (toast).
+   *
+   * @param values - Validated flat form values.
+   */
+  async function onSubmit(values: TDoctorProfileForm) {
+    setIsSaving(true);
+
+    try {
+      const birthDateStr = values.birth_date
+        ? format(values.birth_date, "yyyy-MM-dd")
+        : undefined;
+
+      if (isCreateMode) {
+        // ── Create mode: single atomic request ─────────────────────────────────
+        // POST /practitioners/full creates the practitioner and all sub-resources
+        // in one DB transaction, replacing the previous 8-step sequential pipeline.
+
+        const telecoms = [
+          values.phone
+            ? { system: "phone" as const, value: values.phone, rank: 1 }
+            : null,
+          values.alt_phone
+            ? { system: "phone" as const, value: values.alt_phone, rank: 2 }
+            : null,
+          values.email
+            ? { system: "email" as const, value: values.email, rank: 1 }
+            : null,
+          values.alt_email
+            ? { system: "email" as const, value: values.alt_email, rank: 2 }
+            : null,
+        ].filter((t): t is NonNullable<typeof t> => t !== null);
+
+        const hasAddress = !!(
+          values.address_line ||
+          values.address_city ||
+          values.address_state ||
+          values.address_postal_code
+        );
+
+        const [, err] = await createPractitionerFullAction({
+          payload: {
+            user_id: userId,
+            org_id: orgId,
+            active: true,
+            gender: values.gender || undefined,
+            birth_date: birthDateStr,
+            names:
+              values.family_name || values.given_name || values.prefix
+                ? [
+                    {
+                      family: values.family_name || undefined,
+                      given: values.given_name
+                        ? [values.given_name]
+                        : undefined,
+                      // prefix is FHIR string[] — wrap the single form string
+                      prefix: values.prefix ? [values.prefix] : undefined,
+                    },
+                  ]
+                : undefined,
+            telecom: telecoms.length ? telecoms : undefined,
+            addresses: hasAddress
+              ? [
+                  {
+                    line: values.address_line
+                      ? [values.address_line]
+                      : undefined,
+                    city: values.address_city || undefined,
+                    state: values.address_state || undefined,
+                    postal_code: values.address_postal_code || undefined,
+                  },
+                ]
+              : undefined,
+            communications: values.language_codes?.length
+              ? values.language_codes.map((language_code) => ({
+                  language_code,
+                }))
+              : undefined,
+          },
+        });
+        if (err) {
+          handleZSAError({ err });
+          return;
+        }
+      } else {
+        // ── Edit mode: single atomic PATCH /practitioners/{id}/full ───────────
+
+        const telecoms = [
+          values.phone
+            ? { system: "phone" as const, value: values.phone, rank: 1 }
+            : null,
+          values.alt_phone
+            ? { system: "phone" as const, value: values.alt_phone, rank: 2 }
+            : null,
+          values.email
+            ? { system: "email" as const, value: values.email, rank: 1 }
+            : null,
+          values.alt_email
+            ? { system: "email" as const, value: values.alt_email, rank: 2 }
+            : null,
+        ].filter((t): t is NonNullable<typeof t> => t !== null);
+
+        const hasAddress = !!(
+          values.address_line ||
+          values.address_city ||
+          values.address_state ||
+          values.address_postal_code
+        );
+
+        const [, err] = await updatePractitionerFullAction({
+          payload: {
+            id: initialPractitioner.id,
+            gender: values.gender || undefined,
+            birth_date: birthDateStr,
+            names:
+              values.family_name || values.given_name || values.prefix
+                ? [
+                    {
+                      family: values.family_name || undefined,
+                      given: values.given_name
+                        ? [values.given_name]
+                        : undefined,
+                      // prefix is FHIR string[] — wrap the single form string
+                      prefix: values.prefix ? [values.prefix] : undefined,
+                    },
+                  ]
+                : undefined,
+            telecom: telecoms.length ? telecoms : undefined,
+            addresses: hasAddress
+              ? [
+                  {
+                    line: values.address_line
+                      ? [values.address_line]
+                      : undefined,
+                    city: values.address_city || undefined,
+                    state: values.address_state || undefined,
+                    postal_code: values.address_postal_code || undefined,
+                  },
+                ]
+              : undefined,
+            communications: values.language_codes?.length
+              ? values.language_codes.map((language_code) => ({
+                  language_code,
+                }))
+              : undefined,
+          },
+        });
+        if (err) {
+          handleZSAError({ err });
+          return;
+        }
+      }
+
+      toast.success(isCreateMode ? "Profile created." : "Profile updated.");
+      router.refresh();
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────────
+
+  // Folder path is "{practitionerFhirId}/profile". Undefined in create mode —
+  // upload is disabled until the practitioner record exists (see DoctorProfilePhotoUpload).
+  const folderPath = initialPractitioner?.id
+    ? `${initialPractitioner.id}/profile`
+    : undefined;
+
+  const tokenFetcher = useFileNestTokenFetcher({
+    filePath: folderPath,
+    allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/gif"],
+    maxSizeMb: 5,
+    maxFiles: 1,
+    metadata: initialPractitioner?.id
+      ? { practitionerFhirId: initialPractitioner.id }
+      : {},
+    userId,
+    orgId,
+  });
+
+  // Derive photo state from the FHIR practitioner.photo[] array (first entry = profile photo).
+  const existingPhoto = initialPractitioner?.photo?.[0] ?? null;
+  /** FileNest file ID stored in the FHIR photo url field — used to fetch presigned URLs. */
+  const initialFileId = existingPhoto?.url ?? undefined;
+  /** FHIR Practitioner.id — required to call addPractitionerPhotoAction / patchPractitionerPhotoAction. */
+  const practitionerId = initialPractitioner?.id ?? undefined;
+  /** FHIR photo sub-resource item id — used by patchPractitionerPhotoAction when updating. */
+  const existingPhotoItemId = existingPhoto?.id ?? undefined;
+
+  // Derive a display name for the avatar fallback letter from the practitioner's
+  // given name if available, otherwise fall back to the userId initial.
+  const displayName = initialPractitioner?.name?.[0]?.given?.[0] ?? undefined;
+
+  return (
+    <FileNestProvider
+      tokenFetcher={tokenFetcher}
+      projectId={process.env.NEXT_PUBLIC_FILENEST_PROJECT_ID!}
+      baseUrl={process.env.NEXT_PUBLIC_FILENEST_API_URL}
+      queryClient={queryClient}
+    >
+      <div>
+        {/* Page title */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold text-foreground">Doctor Profile</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            {isCreateMode
+              ? "Complete your practitioner profile to get started."
+              : "Your practitioner information on file."}
+          </p>
+        </div>
+
+        {/* Incomplete profile banner */}
+        {isCreateMode && (
+          <div className="flex items-center gap-2 bg-warning/20 text-warning px-4 py-2 rounded-full mb-6 text-sm font-medium">
+            <CircleAlert className="size-4 shrink-0" />
+            <span>Complete your profile first!</span>
+          </div>
+        )}
+
+        {/* Profile photo — independent of the form submit; uploads immediately on selection */}
+        <div className="mb-8">
+          <DoctorProfilePhotoUpload
+            initialFileId={initialFileId}
+            practitionerId={practitionerId}
+            existingPhotoItemId={existingPhotoItemId}
+            displayName={displayName}
+          />
+        </div>
+
+        <Form {...form}>
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            // min-h-[calc(100dvh-132px)] matches this app's established
+            // convention for the AppNavbar + breadcrumb chrome height. Was
+            // -10rem (160px), which undershot the true available height —
+            // on short forms (no scroll), the sticky submit bar below
+            // settled wherever this flex column ended rather than the real
+            // viewport bottom, leaving a visible gap under it.
+            className="flex flex-col min-h-[calc(100dvh-132px)] -mb-6"
+          >
+            <div className="flex flex-col gap-10 flex-1 mb-4">
+              <PersonalDetailsSection />
+              <ContactSection />
+              <AddressSection />
+              <LanguagesSection />
+            </div>
+
+            {/* Sticky submit bar. Sticky offsets resolve against the
+                scrollport's padding edge, so a plain `bottom-0` still leaves
+                the parent <main>'s pb-4 (16px) as a visible gap below the
+                bar. `-bottom-4` feeds that 16px into the sticky offset
+                itself — confirmed via computed styles that the previous
+                `-mb-6` here had zero effect (negative margin on a sticky box
+                doesn't reliably affect its stuck offset across browsers). */}
+            <div className="sticky -bottom-4 z-10 -mx-4 px-4 py-3 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80 border-t flex justify-end">
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSaving}
+                className="w-full md:w-fit min-w-32"
+              >
+                {isSaving && <Loader2 className="size-4 mr-2 animate-spin" />}
+                {isCreateMode ? "Set up profile" : "Save changes"}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </div>
+    </FileNestProvider>
+  );
+}

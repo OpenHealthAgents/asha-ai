@@ -1,0 +1,176 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'core/theme/colors.dart';
+import 'core/theme/typography.dart';
+import 'data/repository/health_repository.dart';
+import 'data/repository/profile_repository.dart';
+import 'data/repository/booking_repository.dart';
+import 'view/auth/login_screen.dart';
+import 'view/onboarding/welcome_screen.dart';
+import 'view/onboarding/profile_setup_screen.dart';
+import 'view/onboarding/goals_screen.dart';
+import 'view/onboarding/complete_screen.dart';
+import 'view/dashboard/main_navigation_shell.dart';
+import 'view/dashboard/activity_tracking_screen.dart';
+import 'view/profile/profile_screen.dart';
+import 'view/profile/clinical_units_screen.dart';
+import 'view/profile/vitals_reminders_screen.dart';
+import 'view/profile/vitals_thresholds_screen.dart';
+import 'view/profile/general_settings_screen.dart';
+import 'view/profile/appointment_history_screen.dart';
+import 'view/booking/select_specialist_screen.dart';
+import 'view/booking/select_date_time_screen.dart';
+import 'view/booking/review_booking_screen.dart';
+import 'view/booking/booking_confirmed_screen.dart';
+import 'view/splash/splash_screen.dart';
+import 'viewmodel/activity_viewmodel.dart';
+import 'viewmodel/profile_viewmodel.dart';
+import 'viewmodel/booking_viewmodel.dart';
+import 'viewmodel/settings_viewmodel.dart';
+import 'viewmodel/auth_viewmodel.dart';
+import 'viewmodel/intake_viewmodel.dart';
+import 'data/service/intake_service.dart';
+import 'view/intake/intake_chat_screen.dart';
+import 'view/intake/intake_completion_screen.dart';
+import 'data/repository/auth_repository.dart';
+import 'data/service/notification_service.dart';
+
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'data/service/vitals_foreground_service.dart';
+import 'data/service/background_sync_service.dart';
+import 'data/service/fhir_api_client.dart';
+import 'features/asha_field_copilot/view/asha_copilot_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.initCommunicationPort();
+  VitalsForegroundService.init();
+  await BackgroundSyncService.initialize();
+  await BackgroundSyncService.schedulePeriodicSync();
+  await NotificationService.instance.init();
+  await NotificationService.instance.requestPermissions();
+  
+  final healthRepo = HealthRepository();
+  final savedToken = await healthRepo.getSetting('iam_jwt_token');
+  if (savedToken != null && savedToken.isNotEmpty) {
+    FhirApiClient().configure(
+      baseUrl: 'https://fhirgql.drgodly.com',
+      token: savedToken,
+      isLiveMode: true,
+    );
+  }
+  
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => ActivityViewModel(
+            repository: HealthRepository(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => ProfileViewModel(
+            profileRepository: ProfileRepository(),
+            healthRepository: HealthRepository(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => BookingViewModel(
+            bookingRepository: BookingRepository(),
+            healthRepository: HealthRepository(),
+            profileRepository: ProfileRepository(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => SettingsViewModel(
+            healthRepository: HealthRepository(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => AuthViewModel(
+            authRepository: AuthRepository(),
+            healthRepository: HealthRepository(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => IntakeViewModel(
+            intakeService: IntakeService(),
+          ),
+        ),
+      ],
+      child: const PhiaApp(),
+    ),
+  );
+}
+
+class PhiaApp extends StatelessWidget {
+  const PhiaApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return WithForegroundTask(
+      child: MaterialApp(
+        title: 'DrGodly',
+        debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: PhiaColors.background,
+        colorScheme: const ColorScheme.light(
+          primary: PhiaColors.primary,
+          secondary: PhiaColors.primaryCard,
+          surface: PhiaColors.surface,
+          error: PhiaColors.pulseRed,
+          onPrimary: Colors.white,
+          onSurface: PhiaColors.textPrimary,
+        ),
+        cardTheme: CardThemeData(
+          color: PhiaColors.surface,
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: PhiaColors.borderSubtle, width: 1),
+          ),
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: PhiaColors.primary,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          iconTheme: IconThemeData(color: Colors.white),
+          titleTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        textTheme: PhiaTypography.textTheme,
+        useMaterial3: true,
+      ),
+      initialRoute: '/splash',
+      routes: {
+        '/splash': (context) => const SplashScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/welcome': (context) => const WelcomeScreen(),
+        '/profile_setup': (context) => const ProfileSetupScreen(),
+        '/goals': (context) => const GoalsScreen(),
+        '/complete': (context) => const CompleteScreen(),
+        '/dashboard': (context) => const MainNavigationShell(),
+        '/profile': (context) => const ProfileScreen(),
+        '/activity_tracking': (context) => const ActivityTrackingScreen(),
+        '/booking_specialist': (context) => const SelectSpecialistScreen(),
+        '/booking_date_time': (context) => const SelectDateTimeScreen(),
+        '/booking_review': (context) => const ReviewBookingScreen(),
+        '/booking_confirmed': (context) => const BookingConfirmedScreen(),
+        '/clinical_units': (context) => const ClinicalUnitsScreen(),
+        '/vitals_reminders': (context) => const VitalsRemindersScreen(),
+        '/vitals_thresholds': (context) => const VitalsThresholdsScreen(),
+        '/general_settings': (context) => const GeneralSettingsScreen(),
+        '/appointment_history': (context) => const AppointmentHistoryScreen(),
+        '/intake': (context) => const IntakeChatScreen(),
+        '/intake_completion': (context) => const IntakeCompletionScreen(),
+        '/asha_copilot': (context) => const AshaCopilotScreen(),
+      },
+    ),
+    );
+  }
+}

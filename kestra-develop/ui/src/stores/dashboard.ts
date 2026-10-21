@@ -1,0 +1,427 @@
+import {computed, ref, watch} from "vue"
+import {defineStore} from "pinia"
+import type {RouteLocation} from "vue-router"
+import {useClient, type ChartFiltersOverrides, type ExportFormat} from "@kestra-io/kestra-sdk"
+import * as DashboardsAPI from "@kestra-io/kestra-sdk/dashboards"
+import * as YAML_UTILS from "@kestra-io/topology/flow-yaml-utils"
+import {apiUrl, apiUrlWithoutTenants, basePath} from "override/utils/route"
+import {useMiscStore} from "override/stores/misc"
+import * as Utils from "../utils/utils"
+import {handledIf} from "../utils/kestraHttp"
+import {validationErrorLines, type ValidationError} from "../utils/validationErrors"
+import {routeFamily} from "../utils/routeFamily"
+import type {Dashboard, Chart, DashboardSettings} from "../components/dashboard/types.ts"
+import {removeRefPrefix, usePluginsStore, type JsonSchemaDef, type RootJsonSchema} from "./plugins"
+import {useUnsavedChangesStore} from "./unsavedChanges"
+import {useBookmarksStore} from "./bookmarks"
+
+type ParsedDashboardSource = {id?: string} & Record<string, unknown>
+type DashboardListOptions = Omit<NonNullable<Parameters<typeof DashboardsAPI.searchDashboards>[0]>, "sort"> & {sort?: string}
+type LoadedChart = Chart & {raw: Chart}
+type DefaultDefinitions = {main: string, flow: string, namespace: string}
+
+interface LoadChartResult {
+    error: string | null;
+    data: LoadedChart | null;
+    raw: Record<string, unknown>;
+}
+
+/** Returns false when the export carried nothing the user can open. Only ION can: a CSV always carries
+ *  its header row, while an empty ION chart is a 0 byte body that looks like a failed download. */
+const downloadHandler = (data: Blob, filename: string, format: ExportFormat): boolean => {
+    const blob = new Blob([data], {type: "application/octet-stream"})
+    if (format === "ION" && blob.size === 0) return false
+
+    Utils.downloadUrl(window.URL.createObjectURL(blob), `${filename}.${format.toLowerCase()}`)
+    return true
+}
+
+export const DEFAULT_DASHBOARD = {
+    id: "default",
+    title: "",
+    deleted: false,
+    charts: [],
+} as const satisfies Dashboard
+
+export const useDashboardStore = defineStore("dashboard", () => {
+    const dashboardList = ref<{ id: string; title: string; isDefault: boolean }[]>()
+    const selectedChart = ref<Chart>()
+    const activeDashboard = ref<Dashboard>()
+    const defaultDashboards = ref<DashboardSettings>()
+    const defaultDefinitions = ref<DefaultDefinitions>()
+    const chartErrors = ref<string[]>([])
+    const isCreating = ref<boolean>(false)
+
+    const sourceCode = ref("")
+    const sourceCodeOrigin = ref("")
+    const parsedSource = computed<ParsedDashboardSource | undefined>((previous) => {
+        try {
+            return YAML_UTILS.parse(sourceCode.value) as ParsedDashboardSource
+        } catch {
+            return previous
+        }
+    })
+
+    const haveChange = computed(() => sourceCodeOrigin.value !== sourceCode.value)
+
+    const unsavedChangesStore = useUnsavedChangesStore()
+
+    watch(haveChange, (newValue) => {
+        unsavedChangesStore.unsavedChange = newValue
+    })
+
+    const axios = useClient()
+
+    async function list(options: DashboardListOptions, route: RouteLocation): Promise<{ id: string; title: string; isDefault: boolean }[]> {
+        const {sort, ...params} = options
+        const res = await DashboardsAPI.searchDashboards({...params, size: 100, sort: sort ? [sort] : undefined})
+        await loadDefaults()
+        let isThereADefault = false
+        dashboardList.value = (res.results as { id: string; title: string }[]).map(dashboard => {
+            const isADefaultForThisRoute = isAdminDefinedDefaultDashboard(dashboard.id, route)
+            if(isADefaultForThisRoute){
+                isThereADefault = true
+            }
+            return {...dashboard, isDefault: isADefaultForThisRoute}
+        })
+        if(!isThereADefault){
+            const defaultDashboardBundledInUI = {...DEFAULT_DASHBOARD, title: "default", isDefault: true}
+            dashboardList.value = [defaultDashboardBundledInUI, ...dashboardList.value]
+        }
+        return dashboardList.value
+    }
+
+    /** Loads the tenant default dashboards, none when the instance cannot store dashboards. The route is
+     *  only in the EE SDK (`dashboards-admin`), so it goes through the raw client to stay edition-agnostic. */
+    async function loadDefaults() {
+        if (useMiscStore().configs?.isCustomDashboardsEnabled === false) {
+            defaultDashboards.value = {}
+            return defaultDashboards.value
+        }
+
+        const {data} = await axios.get<DashboardSettings>(`${apiUrl()}/dashboards/settings/default-dashboards`)
+        defaultDashboards.value = data
+        return defaultDashboards.value
+    }
+
+    async function loadDefaultDefinitions() {
+        if (!defaultDefinitions.value) {
+            defaultDefinitions.value = await DashboardsAPI.defaultDashboardDefinitions() as DefaultDefinitions
+        }
+        return defaultDefinitions.value!
+    }
+
+    /** Side-effect-free lookup for autocompletion: `list()` and `load()` would replace the dashboard on screen. */
+    async function searchIds(): Promise<{ id: string; title?: string }[]> {
+        const res = await DashboardsAPI.searchDashboards({size: 100})
+        return res.results as { id: string; title?: string }[]
+    }
+
+    async function chartsById(id: Dashboard["id"]): Promise<Chart[]> {
+        try {
+            const dashboard = await DashboardsAPI.dashboard({id}) as Dashboard
+            return dashboard.charts ?? []
+        } catch (e: unknown) {
+            if (handledIf(e, [404])) return []
+            throw e
+        }
+    }
+
+    async function saveDefaults(defaultDashboardsRequest: DashboardSettings) {
+        const loadedDef = await loadDefaults()
+        const def = {...loadedDef, ...defaultDashboardsRequest}
+
+        const tenantId = basePath().split("/").filter(Boolean)[2]
+        if (!tenantId) {
+            throw new Error("Cannot save the default dashboards: no tenant is selected.")
+        }
+
+        const {data} = await axios.post<DashboardSettings>(`${apiUrlWithoutTenants()}/tenants/${tenantId}/settings/default-dashboards`, def)
+        defaultDashboards.value = data
+    }
+
+    const DASHBOARD_ROUTES = ["home", "flows/update", "namespaces/update"]
+    type DASHBOARD_TYPE = "DASHBOARD_MAIN" | "DASHBOARD_FLOW" | "DASHBOARD_NAMESPACE";
+
+    const KEY_MAP: Record<string, DASHBOARD_TYPE> = {
+        home: "DASHBOARD_MAIN",
+        "flows/update": "DASHBOARD_FLOW",
+        "namespaces/update": "DASHBOARD_NAMESPACE",
+    }
+
+    function getDashboardType(route: RouteLocation) {
+        return KEY_MAP[routeFamily(route.name)]
+    }
+
+    /** The route's dashboard param, else the user's last pick, else the tenant default, else the bundled one. */
+    const getDashboardId = async (route: RouteLocation): Promise<string> => {
+        const routeName = route.name ? routeFamily(route.name) : undefined
+        if(!routeName || !DASHBOARD_ROUTES.includes(routeName)){
+            throw new Error("invalid route in getDashboard: "+routeName?.toString())
+        }
+
+        if(route.params?.dashboard && typeof route.params.dashboard === "string" && route.params.dashboard !== "default"){
+            return route.params.dashboard
+        }
+
+        const key = getUserDashboardStorageKey(route)
+        const userDashboard = localStorage.getItem(key)
+        if(userDashboard){
+            return userDashboard
+        }
+
+        const defaultTenantDashboard = await getTenantDefaultDashboardId(route)
+        if(defaultTenantDashboard) {
+            return defaultTenantDashboard
+        }
+
+        return "default"
+    }
+
+    function getUserDashboardStorageKey(route: RouteLocation){
+        const tenant = route.params["tenant"]
+        const routeName = route.name ? routeFamily(route.name) : undefined
+        if (!tenant) {
+            throw new Error("tenant is mandatory in getUserDashboardStorageKey")
+        }
+        return `userDashboard/${tenant}/${routeName}`
+    }
+
+    async function getTenantDefaultDashboardId(route: RouteLocation) {
+        const dashboardType = getDashboardType(route)
+
+        if (!dashboardType) return Promise.resolve(undefined)
+        await loadDefaults()
+        switch (dashboardType) {
+            case "DASHBOARD_MAIN":
+                return Promise.resolve(defaultDashboards.value?.defaultHomeDashboard)
+            case "DASHBOARD_NAMESPACE":
+                return Promise.resolve(defaultDashboards.value?.defaultNamespaceOverviewDashboard)
+            case "DASHBOARD_FLOW":
+                return Promise.resolve(defaultDashboards.value?.defaultFlowOverviewDashboard)
+        }
+    }
+
+    const isAdminDefinedDefaultDashboard = (dashboardId: string, route: RouteLocation): boolean => {
+        const dashboardType = getDashboardType(route)
+        if(dashboardType){
+            switch (dashboardType){
+                case "DASHBOARD_MAIN": return defaultDashboards.value?.defaultHomeDashboard === dashboardId
+                case "DASHBOARD_NAMESPACE": return defaultDashboards.value?.defaultNamespaceOverviewDashboard === dashboardId
+                case "DASHBOARD_FLOW": return defaultDashboards.value?.defaultFlowOverviewDashboard === dashboardId
+            }
+        }
+        return false
+    }
+
+    async function load(id: Dashboard["id"]) : Promise<Dashboard | undefined> {
+        let data
+        try{
+            data = await DashboardsAPI.dashboard({id}) as Dashboard
+        } catch (e: unknown) {
+            // The page falls back to the bundled default on any failure; only the 404 is its own report.
+            handledIf(e, [404])
+            return undefined
+        }
+
+        activeDashboard.value = data
+        sourceCode.value = data.sourceCode ?? ""
+        sourceCodeOrigin.value = sourceCode.value
+        latestValidation++
+        setValidationErrors(undefined)
+
+        return activeDashboard.value
+    }
+
+    /** Dashboard writes are EE-only routes, absent from the OSS SDK, so they go through the raw client.
+     *  The backend only routes `application/x-yaml`, not `application/yaml`. */
+    const yaml = {headers: {"Content-Type": "application/x-yaml"}}
+
+    async function create(source: Dashboard["sourceCode"]) {
+        const {data} = await axios.post(`${apiUrl()}/dashboards`, source ?? "", yaml)
+        sourceCodeOrigin.value = source ?? ""
+        return data
+    }
+
+    async function update({id, source}: {id: Dashboard["id"]; source: Dashboard["sourceCode"];}) {
+        const {data} = await axios.put(`${apiUrl()}/dashboards/${id}`, source ?? "", yaml)
+        sourceCodeOrigin.value = source ?? ""
+        return data
+    }
+
+    async function deleteDashboard(id: Dashboard["id"]) {
+        const {data: deleted} = await axios.delete(`${apiUrl()}/dashboards/${id}`)
+
+        const bookmarksStore = useBookmarksStore()
+        const encodedId = encodeURIComponent(id)
+        bookmarksStore.updateAll(bookmarksStore.pages.filter(({path}) => {
+            const segments = path.split(/[?#]/)[0].split("/")
+            const index = segments.indexOf("dashboards")
+            return index === -1 || segments[index + 1] !== encodedId
+        }))
+
+        return deleted
+    }
+
+    let latestValidation = 0
+
+    /** Drops a response overtaken by a newer validation: it describes a source the editor no longer holds. */
+    async function validateDashboard(source: Dashboard["sourceCode"]) {
+        const validation = ++latestValidation
+        const isLatest = () => validation === latestValidation
+        try {
+            const {data} = await axios.post(`${apiUrl()}/dashboards/validate`, source ?? "", yaml)
+            if (isLatest()) {
+                setValidationErrors(data.errors)
+            }
+            return data
+        } catch (error) {
+            if (isLatest()) {
+                setValidationErrors(undefined)
+            }
+            throw error
+        }
+    }
+
+    async function generate(id: Dashboard["id"], chartId: Chart["id"], parameters: ChartFiltersOverrides) {
+        try {
+            const {data} = await axios.post(`${apiUrl()}/dashboards/${id}/charts/${chartId}`, parameters)
+            return data
+        } catch (e: unknown) {
+            if (handledIf(e, [404])) return undefined
+            throw e
+        }
+    }
+
+    async function validateChart(source: string) {
+        const {data} = await axios.post(`${apiUrl()}/dashboards/validate/chart`, source, yaml)
+        chartErrors.value = validationErrorLines(data.errors)
+        return data
+    }
+
+    async function chartPreview(request: Parameters<typeof DashboardsAPI.previewChart>[0]) {
+        return DashboardsAPI.previewChart(request)
+    }
+
+    /** Resolves to false when the export carried nothing the user can open, so the caller can tell
+     *  them instead of silently downloading an empty file. Only ION resolves that way. */
+    async function exportDashboard(dashboard: Dashboard, chart: Chart, parameters: ChartFiltersOverrides, format: ExportFormat = "CSV"): Promise<boolean> {
+        const data = dashboard.id === "default"
+            ? await DashboardsAPI.exportChart({format, chart: chart.content ?? "", globalFilter: parameters})
+            : await DashboardsAPI.exportDashboardChart({format, id: dashboard.id, chartId: chart.id ?? "", ...parameters})
+
+        return downloadHandler(data, `chart__${chart.id}`, format)
+    }
+
+    const pluginsStore = usePluginsStore()
+
+    const InitialSchema = {definitions: {}, $ref: ""}
+
+    const schema = computed<RootJsonSchema>(() =>  {
+        return pluginsStore.schemaType?.dashboard ?? InitialSchema
+    })
+
+    const definitions = computed<Record<string, JsonSchemaDef>>(() =>  {
+        return schema.value.definitions ?? {}
+    })
+
+    function recursivelyLoopUpSchemaRef(schemaValue: JsonSchemaDef | undefined, defs: Record<string, JsonSchemaDef>): JsonSchemaDef | undefined {
+        if (schemaValue?.$ref) {
+            const refKey = removeRefPrefix(schemaValue.$ref)
+            return recursivelyLoopUpSchemaRef(defs[refKey], defs)
+        }
+        return schemaValue
+    }
+
+    const rootSchema = computed<JsonSchemaDef | undefined>(() => {
+        return recursivelyLoopUpSchemaRef(schema.value, definitions.value)
+    })
+
+    const rootProperties = computed<Record<string, JsonSchemaDef> | undefined>(() => {
+        return rootSchema.value?.properties
+    })
+
+    async function loadChart(chart: Chart): Promise<LoadChartResult> {
+        const yamlChart = YAML_UTILS.stringify(chart)
+        if(selectedChart.value?.content === yamlChart){
+            return {
+                error: chartErrors.value.length > 0 ? chartErrors.value[0] : null,
+                data: selectedChart.value ? {...selectedChart.value, raw: chart} : null,
+                raw: chart,
+            }
+        }
+        const result: LoadChartResult = {
+            error: null,
+            data: null,
+            raw: {},
+        }
+        const errors = await validateChart(yamlChart)
+
+        const errorLines = validationErrorLines(errors.errors)
+        if (errorLines.length) {
+            result.error = errorLines.join("\n")
+        } else {
+            result.data = {...chart, content: yamlChart, raw: chart}
+        }
+
+        selectedChart.value = result.data
+            ? {
+                ...result.data,
+                chartOptions: {
+                    ...result.data.chartOptions,
+                    width: 12,
+                },
+            }
+            : undefined
+        chartErrors.value = [result.error].filter(e => e !== null)
+
+        return result
+    }
+
+    const errors = ref<string[] | undefined>()
+    const validationErrors = ref<ValidationError[]>()
+
+    function setValidationErrors(located: ValidationError[] | undefined) {
+        validationErrors.value = located
+        const lines = validationErrorLines(located)
+        errors.value = lines.length ? lines : undefined
+    }
+
+    return {
+        activeDashboard,
+        chartErrors,
+        isCreating,
+        selectedChart,
+        list,
+        getDashboardId,
+        load,
+        getUserDashboardStorageKey,
+        defaultDashboards,
+        loadDefaults,
+        defaultDefinitions,
+        loadDefaultDefinitions,
+        searchIds,
+        chartsById,
+        saveDefaults,
+        create,
+        update,
+        delete: deleteDashboard,
+        validateDashboard,
+        generate,
+        validateChart,
+        chartPreview,
+        export: exportDashboard,
+        loadChart,
+        errors,
+        validationErrors,
+
+        schema,
+        definitions,
+        rootSchema,
+        rootProperties,
+        sourceCode,
+        sourceCodeOrigin,
+        haveChange,
+        parsedSource,
+    }
+})

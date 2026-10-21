@@ -1,0 +1,538 @@
+"""Convenience helpers for emitting outgoing webhook events.
+
+Call these functions after data is committed to the database.
+Each schedules a Celery task and returns immediately — Svix delivery
+happens in the worker process.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+from uuid import UUID
+
+from celery import current_app as celery_app
+
+from app.constants.celery_tasks import CeleryTask
+from app.constants.devices_map import resolve_device_name
+from app.constants.webhooks.events import SERIES_TYPE_TO_GRANULAR_EVENT, SERIES_TYPE_TO_GROUP_EVENT
+from app.schemas.webhooks.event_types import WebhookEventType
+from app.services.outgoing_webhooks import svix as svix_service
+
+logger = logging.getLogger(__name__)
+
+# Maximum number of samples included in a single Svix message.
+# At ~200 bytes per serialised sample, 2 500 samples ≈ 500 KB — well within
+# Svix's 1 MB payload limit.  Batches larger than this are split into
+# consecutive chunk events, each carrying a ``chunk_index`` / ``total_chunks``
+# envelope so consumers can reassemble if needed.
+SVIX_MAX_SAMPLES_PER_EVENT = 2500
+
+# Svix eventId must match [a-zA-Z0-9\-_.] — colons, plus-signs, and other
+# characters in ISO 8601 timestamps are not allowed.
+_SVIX_ID_SAFE = re.compile(r"[^a-zA-Z0-9\-_.]")
+
+
+def _safe_key(raw: str) -> str:
+    """Replace characters forbidden in a Svix eventId with underscores."""
+    return _SVIX_ID_SAFE.sub("_", raw)
+
+
+def _dispatch(
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    channels: list[str] | None = None,
+    idempotency_key: str | None = None,
+) -> None:
+    """Schedule the Celery emit task.
+
+    Silently drops the event when Svix is not configured or the broker
+    (Redis) is unreachable so that data ingestion is never blocked by
+    webhook infrastructure.
+    """
+    if not svix_service.is_enabled():
+        return
+    try:
+        celery_app.send_task(
+            CeleryTask.EMIT_WEBHOOK_EVENT,
+            args=[event_type, payload],
+            kwargs={"channels": channels, "idempotency_key": idempotency_key},
+        )
+    except Exception:
+        logger.warning("Could not enqueue webhook event %s", event_type, exc_info=True)
+
+
+def on_workout_created(
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    provider: str,
+    device: str | None,
+    workout_type: str | None,
+    start_time: str,
+    end_time: str,
+    zone_offset: str | None,
+    duration_seconds: float | None,
+    calories_kcal: float | None = None,
+    distance_meters: float | None = None,
+    avg_heart_rate_bpm: int | None = None,
+    max_heart_rate_bpm: int | None = None,
+    elevation_gain_meters: float | None = None,
+    avg_pace_sec_per_km: int | None = None,
+    sync: dict[str, str] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.WORKOUT_CREATED,
+        {
+            "type": WebhookEventType.WORKOUT_CREATED,
+            "data": {
+                "id": str(record_id),
+                "user_id": str(user_id),
+                "type": workout_type,
+                "start_time": start_time,
+                "end_time": end_time,
+                "zone_offset": zone_offset,
+                "duration_seconds": duration_seconds,
+                "source": {"provider": provider, "device": device},
+                "calories_kcal": calories_kcal,
+                "distance_meters": distance_meters,
+                "avg_heart_rate_bpm": avg_heart_rate_bpm,
+                "max_heart_rate_bpm": max_heart_rate_bpm,
+                "avg_pace_sec_per_km": avg_pace_sec_per_km,
+                "elevation_gain_meters": elevation_gain_meters,
+                "sync": sync,
+            },
+        },
+        idempotency_key=f"workout.created.{record_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_meal_created(
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    provider: str,
+    device: str | None,
+    start_time: str,
+    end_time: str,
+    zone_offset: str | None,
+    title: str | None = None,
+    meal_type: str | None = None,
+    calories_kcal: float | None = None,
+    macros: dict[str, float | None] | None = None,
+    water_ml: float | None = None,
+    nutrients: dict[str, dict[str, float | str]] | None = None,
+    sync: dict[str, str] | None = None,
+) -> None:
+    """Dispatch the meal.created webhook for a newly saved meal."""
+    _dispatch(
+        WebhookEventType.MEAL_CREATED,
+        {
+            "type": WebhookEventType.MEAL_CREATED,
+            "data": {
+                "id": str(record_id),
+                "user_id": str(user_id),
+                "title": title,
+                "meal_type": meal_type,
+                "start_time": start_time,
+                "end_time": end_time,
+                "zone_offset": zone_offset,
+                "source": {"provider": provider, "device": device},
+                "calories_kcal": calories_kcal,
+                "macros": macros,
+                "water_ml": water_ml,
+                "nutrients": nutrients or {},
+                "sync": sync,
+            },
+        },
+        idempotency_key=f"meal.created.{record_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_menstrual_cycle_created(
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    provider: str,
+    device: str | None,
+    start_time: str,
+    end_time: str,
+    zone_offset: str | None,
+    current_phase_type: str | None = None,
+    day_in_cycle: int | None = None,
+    cycle_length: int | None = None,
+    is_predicted_cycle: bool | None = None,
+    pregnancy_snapshot: list[dict] | None = None,
+    sync: dict[str, str] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.MENSTRUAL_CYCLE_CREATED,
+        {
+            "type": WebhookEventType.MENSTRUAL_CYCLE_CREATED,
+            "data": {
+                "id": str(record_id),
+                "user_id": str(user_id),
+                "start_time": start_time,
+                "end_time": end_time,
+                "zone_offset": zone_offset,
+                "source": {"provider": provider, "device": device},
+                "current_phase_type": current_phase_type,
+                "day_in_cycle": day_in_cycle,
+                "cycle_length": cycle_length,
+                "is_predicted_cycle": is_predicted_cycle,
+                "pregnancy_snapshot": pregnancy_snapshot,
+                "sync": sync,
+            },
+        },
+        idempotency_key=f"menstrual_cycle.created.{record_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sleep_created(
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    provider: str,
+    device: str | None,
+    start_time: str,
+    end_time: str,
+    zone_offset: str | None,
+    duration_seconds: float | None,
+    efficiency_percent: float | None = None,
+    stages: dict[str, int | None] | None = None,
+    is_nap: bool | None = None,
+    source_app: str | None = None,
+    device_type: str | None = None,
+    sleep_duration_seconds: float | None = None,
+    sleep_stage_intervals: list[dict[str, Any]] | None = None,
+    sync: dict[str, str] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SLEEP_CREATED,
+        {
+            "type": WebhookEventType.SLEEP_CREATED,
+            "data": {
+                "id": str(record_id),
+                "user_id": str(user_id),
+                "start_time": start_time,
+                "end_time": end_time,
+                "zone_offset": zone_offset,
+                "duration_seconds": duration_seconds,
+                "sleep_duration_seconds": sleep_duration_seconds,
+                "source": {
+                    "provider": provider,
+                    "source": source_app,
+                    "device": device,
+                    "device_type": device_type,
+                    "device_name": resolve_device_name(device),
+                },
+                "efficiency_percent": efficiency_percent,
+                "stages": stages,
+                "sleep_stage_intervals": sleep_stage_intervals,
+                "is_nap": is_nap,
+                "sync": sync,
+            },
+        },
+        idempotency_key=f"sleep.created.{record_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_timeseries_batch_saved(
+    *,
+    user_id: UUID,
+    provider: str,
+    series_type: str,
+    sample_count: int,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    samples: list[dict[str, Any]] | None = None,
+    sync: dict[str, str] | None = None,
+) -> None:
+    """Emit one webhook event per data-type per ingestion batch.
+
+    Each event carries the full ``samples`` array so consumers can operate in
+    a webhook-first architecture without issuing follow-up API calls.
+
+    When ``samples`` exceeds ``SVIX_MAX_SAMPLES_PER_EVENT`` the batch is split
+    into multiple consecutive chunk events.  Every chunk includes
+    ``chunk_index`` (0-based) and ``total_chunks`` so consumers can detect and
+    reassemble split deliveries.  Single-chunk payloads omit these fields to
+    keep the common case clean.
+
+    Two events are emitted per batch:
+    - a *group* event (e.g. ``heart_rate.created``) for broad subscriptions
+    - a *granular* event (e.g. ``series.resting_heart_rate.created``) for
+      narrow subscriptions to a specific metric
+
+    ``sync`` identifies the run that produced the batch, so a consumer can tell a
+    historical backfill from a live reading. It is None where no run owns the write, such
+    as seed data and pushes from providers that do not track runs.
+    """
+    group_event = SERIES_TYPE_TO_GROUP_EVENT.get(series_type)
+    if group_event is None:
+        return
+    granular_event = SERIES_TYPE_TO_GRANULAR_EVENT.get(series_type)
+    if granular_event and granular_event != group_event:
+        event_types_to_emit = [group_event, granular_event]
+    else:
+        event_types_to_emit = [group_event]
+    samples = samples or []
+
+    def _emit(event_type: str, payload_data: dict[str, Any], ikey: str) -> None:
+        _dispatch(
+            event_type,
+            {"type": event_type, "data": payload_data},
+            idempotency_key=_safe_key(f"{ikey}.{event_type}"),
+            channels=[f"user.{user_id}"],
+        )
+
+    # Two runs can write the same window with different provenance. Without the run in
+    # the key they share an event id, and Svix drops the second as a duplicate.
+    run_segment = f".{sync['run_id']}" if sync and sync.get("run_id") else ""
+
+    if len(samples) <= SVIX_MAX_SAMPLES_PER_EVENT:
+        base_key = f"timeseries.{user_id}.{provider}.{series_type}.{start_time or ''}.{end_time or ''}{run_segment}"
+        data: dict[str, Any] = {
+            "user_id": str(user_id),
+            "provider": provider,
+            "series_type": series_type,
+            "sample_count": sample_count,
+            "start_time": start_time,
+            "end_time": end_time,
+            "samples": samples,
+            "sync": sync,
+        }
+        for event_type in event_types_to_emit:
+            _emit(event_type, data, base_key)
+    else:
+        chunks = [
+            samples[i : i + SVIX_MAX_SAMPLES_PER_EVENT] for i in range(0, len(samples), SVIX_MAX_SAMPLES_PER_EVENT)
+        ]
+        total_chunks = len(chunks)
+        for chunk_index, chunk in enumerate(chunks):
+            chunk_start = chunk[0]["timestamp"] if chunk else start_time
+            chunk_end = chunk[-1]["timestamp"] if chunk else end_time
+            base_key = (
+                f"timeseries.{user_id}.{provider}.{series_type}."
+                f"{start_time or ''}.{end_time or ''}{run_segment}.chunk{chunk_index}"
+            )
+            data = {
+                "user_id": str(user_id),
+                "provider": provider,
+                "series_type": series_type,
+                "sample_count": sample_count,
+                "start_time": chunk_start,
+                "end_time": chunk_end,
+                "samples": chunk,
+                "chunk_index": chunk_index,
+                "total_chunks": total_chunks,
+                "sync": sync,
+            }
+            for event_type in event_types_to_emit:
+                _emit(event_type, data, base_key)
+
+
+def on_connection_created(
+    *,
+    user_id: UUID,
+    provider: str,
+    connection_id: UUID,
+    connected_at: str,
+) -> None:
+    _dispatch(
+        WebhookEventType.CONNECTION_CREATED,
+        {
+            "type": WebhookEventType.CONNECTION_CREATED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "connection_id": str(connection_id),
+                "connected_at": connected_at,
+            },
+        },
+        idempotency_key=_safe_key(f"connection.created.{user_id}.{provider}.{connected_at}"),
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_connection_revoked(
+    *,
+    user_id: UUID,
+    provider: str,
+    connection_id: UUID,
+    reason: str,
+    revoked_at: str,
+) -> None:
+    """Emit when a connection becomes invalid and the user must re-authorize.
+
+    ``reason`` is a short cause, e.g. ``"refresh_failed"`` or
+    ``"deregistration"``.
+    """
+    _dispatch(
+        WebhookEventType.CONNECTION_REVOKED,
+        {
+            "type": WebhookEventType.CONNECTION_REVOKED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "connection_id": str(connection_id),
+                "reason": reason,
+                "revoked_at": revoked_at,
+            },
+        },
+        idempotency_key=_safe_key(f"connection.revoked.{user_id}.{provider}.{revoked_at}"),
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_started(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    run_id: str,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SYNC_STARTED,
+        {
+            "type": WebhookEventType.SYNC_STARTED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "run_id": run_id,
+                "message": message,
+                "metadata": metadata or {},
+            },
+        },
+        idempotency_key=f"sync.started.{run_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_completed(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    run_id: str,
+    status: str,
+    message: str | None = None,
+    items_processed: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SYNC_COMPLETED,
+        {
+            "type": WebhookEventType.SYNC_COMPLETED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "run_id": run_id,
+                "status": status,
+                "message": message,
+                "items_processed": items_processed,
+                "metadata": metadata or {},
+            },
+        },
+        idempotency_key=f"sync.completed.{run_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_failed(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    run_id: str,
+    error: str,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SYNC_FAILED,
+        {
+            "type": WebhookEventType.SYNC_FAILED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "run_id": run_id,
+                "error": error,
+                "message": message,
+                "metadata": metadata or {},
+            },
+        },
+        idempotency_key=f"sync.failed.{run_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_data_type_finished(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    scope: str,
+    run_id: str,
+    data_type: str,
+    kind: str,
+    status: str,
+    succeeded: bool,
+    native_data_type: str | None = None,
+    reported_records: int | None = None,
+    items_inserted: int = 0,
+    items_updated: int = 0,
+    covered_start: str | None = None,
+    covered_end: str | None = None,
+    coverage_start: str | None = None,
+    coverage_end: str | None = None,
+    error_code: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Emit the terminal outcome of one data type within a run.
+
+    On a historical run this is the per-type "done" signal: the run-level ``sync.completed``
+    only says the whole run finished, which for a months-long backfill arrives long after
+    an individual type is fully in.
+
+    ``written`` is what this run wrote, ``coverage`` the total span now held for the type.
+    They differ, and the second is the one that answers "is the history complete".
+    """
+    event_type = WebhookEventType.SYNC_DATA_TYPE_COMPLETED if succeeded else WebhookEventType.SYNC_DATA_TYPE_FAILED
+    _dispatch(
+        event_type,
+        {
+            "type": event_type,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "scope": scope,
+                "run_id": run_id,
+                "data_type": data_type,
+                "native_data_type": native_data_type,
+                "kind": kind,
+                "status": status,
+                "items_reported": reported_records,
+                "items_inserted": items_inserted,
+                "items_updated": items_updated,
+                "written": {"start": covered_start, "end": covered_end} if covered_end else None,
+                "coverage": {"start": coverage_start, "end": coverage_end} if coverage_end else None,
+                "error_code": error_code,
+                "error": error,
+            },
+        },
+        idempotency_key=_safe_key(f"{event_type}.{run_id}.{data_type}"),
+        channels=[f"user.{user_id}"],
+    )

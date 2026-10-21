@@ -1,0 +1,551 @@
+package io.kestra.core.validations.validator;
+
+import java.lang.reflect.Field;
+import java.util.*;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import io.kestra.core.exceptions.IllegalVariableEvaluationException;
+import io.kestra.core.models.Label;
+import io.kestra.core.models.assets.Asset;
+import io.kestra.core.models.assets.AssetIdentifier;
+import io.kestra.core.models.assets.AssetsDeclaration;
+import io.kestra.core.models.flows.Data;
+import io.kestra.core.models.flows.Flow;
+import io.kestra.core.models.flows.Input;
+import io.kestra.core.models.flows.Output;
+import io.kestra.core.models.flows.input.EeOnly;
+import io.kestra.core.models.flows.input.FormInput;
+import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.ExecutableTask;
+import io.kestra.core.models.tasks.Task;
+import io.kestra.core.models.triggers.AbstractTrigger;
+import io.kestra.core.runners.FlowInputOutput;
+import io.kestra.core.services.NamespaceService;
+import io.kestra.core.utils.ListUtils;
+import io.kestra.core.utils.PebbleUtil;
+import io.kestra.core.validations.FlowValidation;
+import io.kestra.plugin.core.trigger.AbstractWebhookTrigger;
+import io.kestra.plugin.core.trigger.Schedule;
+
+import io.micronaut.core.annotation.AnnotationValue;
+import io.micronaut.core.annotation.NonNull;
+import io.micronaut.core.annotation.Nullable;
+import io.micronaut.validation.validator.constraints.ConstraintValidator;
+import io.micronaut.validation.validator.constraints.ConstraintValidatorContext;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Validator;
+
+import static io.kestra.core.models.Label.READ_ONLY;
+
+@Singleton
+public class FlowValidator implements ConstraintValidator<FlowValidation, Flow> {
+    @Inject
+    private NamespaceService namespaceService;
+
+    @Inject
+    private Validator validator;
+
+    @Override
+    public boolean isValid(
+        @Nullable Flow value,
+        @NonNull AnnotationValue<FlowValidation> annotationMetadata,
+        @NonNull ConstraintValidatorContext context) {
+        if (value == null) {
+            return true;
+        }
+
+        List<String> violations = new ArrayList<>();
+
+        if (namespaceService.requireExistingNamespace(value.getTenantId(), value.getNamespace())) {
+            violations.add("Namespace '" + value.getNamespace() + "' does not exist but is required to exist before a flow can be created in it.");
+        }
+
+        List<Task> allTasks = value.allTasksWithChilds();
+
+        // tasks unique id
+        List<String> taskIds = allTasks.stream()
+            .map(Task::getId)
+            .toList();
+
+        List<String> duplicateIds = getDuplicates(taskIds);
+
+        if (!duplicateIds.isEmpty()) {
+            violations.add("Duplicate task id with name [" + String.join(", ", duplicateIds) + "]");
+        }
+
+        duplicateIds = getDuplicates(value.allTriggerIds());
+
+        if (!duplicateIds.isEmpty()) {
+            violations.add("Duplicate trigger id with name [" + String.join(", ", duplicateIds) + "]");
+        }
+
+        allTasks.stream()
+            .filter(
+                task -> task instanceof ExecutableTask<?> executableTask
+                    && value.getId().equals(executableTask.subflowId().flowId())
+                    && value.getNamespace().equals(executableTask.subflowId().namespace())
+            )
+            .forEach(task -> violations.add("Recursive call to flow [" + value.getNamespace() + "." + value.getId() + "]"));
+
+        // input unique name (top-level): catches two top-level entries sharing an id even when their
+        // expanded child paths are disjoint (e.g. two FORMs both named 'environment').
+        duplicateIds = getDuplicates(ListUtils.emptyOnNull(value.getInputs()).stream().map(Data::getId).toList());
+        if (!duplicateIds.isEmpty()) {
+            violations.add("Duplicate input with name [" + String.join(", ", duplicateIds) + "]");
+        }
+        // FORM expansion guards: MapUtils.flattenToNestedMap silently drops conflicting dotted keys, so
+        // duplicate expanded leaf paths and prefix conflicts (one path nested under another) must be rejected here.
+        List<String> expandedPaths = Input.collectExpandedPaths(value.getInputs());
+        // Only dotted paths are form-relevant: a duplicate bare path can only be two top-level non-FORM inputs,
+        // already reported by the top-level "Duplicate input with name" check above.
+        List<String> duplicatePaths = getDuplicates(expandedPaths).stream().filter(path -> path.contains(".")).toList();
+        if (!duplicatePaths.isEmpty()) {
+            violations.add("Duplicate input path [" + String.join(", ", duplicatePaths) + "]");
+        }
+        for (String ancestor : expandedPaths) {
+            for (String descendant : expandedPaths) {
+                if (!ancestor.equals(descendant) && descendant.startsWith(ancestor + ".")) {
+                    violations.add(String.format("Input path '%s' conflicts with '%s'; one cannot be nested under the other.", ancestor, descendant));
+                }
+            }
+        }
+        checkFlowInputsDependencyGraph(value, violations);
+
+        // EE-only input types (e.g. REUSABLE_INPUTS) cannot run on the open-source edition, so reject a flow
+        // declaring one at save/validation time rather than letting it fail only at execution. EE allows them.
+        violations.addAll(eeOnlyInputsViolations(value.getInputs()));
+
+        // output unique name
+        duplicateIds = getDuplicates(ListUtils.emptyOnNull(value.getOutputs()).stream().map(Data::getId).toList());
+        if (!duplicateIds.isEmpty()) {
+            violations.add("Duplicate output with name [" + String.join(", ", duplicateIds) + "]");
+        }
+
+        findMissingInputsForTriggers(value).forEach(violations::add);
+
+        validateDeclaredInputValues(value, violations);
+        validateDeclaredOutputValues(value, violations);
+
+        // system labels
+        ListUtils.emptyOnNull(value.getLabels()).stream()
+            .filter(label -> Label.isSystem(label.key()) && !label.key().equals(READ_ONLY))
+            .forEach(label -> violations.add("System labels can only be set by Kestra itself, offending label: " + label.key() + "=" + label.value()));
+
+        List<Pattern> inputsWithMinusPatterns = ListUtils.emptyOnNull(value.getInputs())
+            .stream()
+            .filter(input -> input.getId().contains("-"))
+            .map(input -> Pattern.compile("\\{\\{\\s*inputs." + input.getId() + "\\s*\\}\\}"))
+            .collect(Collectors.toList());
+
+        List<String> invalidTasks = allTasks.stream()
+            .filter(task -> checkObjectFieldsWithPatterns(task, inputsWithMinusPatterns))
+            .map(task -> task.getId())
+            .collect(Collectors.toList());
+
+        if (!invalidTasks.isEmpty()) {
+            violations.add(
+                "Invalid input reference: use inputs[key-name] instead of inputs.key-name — keys with dashes require bracket notation, offending tasks:" +
+                    " [" + String.join(", ", invalidTasks) + "]"
+            );
+        }
+
+        List<Pattern> outputsWithMinusPattern = allTasks.stream()
+            .filter(output -> Optional.ofNullable(output.getId()).orElse("").contains("-"))
+            .map(output -> Pattern.compile("\\{\\{\\s*outputs\\." + output.getId() + "\\.[^}]+\\s*\\}\\}"))
+            .collect(Collectors.toList());
+
+        invalidTasks = allTasks.stream()
+            .filter(task -> checkObjectFieldsWithPatterns(task, outputsWithMinusPattern))
+            .map(task -> task.getId())
+            .collect(Collectors.toList());
+
+        violations.addAll(EEViolations(value));
+        violations.addAll(assetsDeclarationViolations(value));
+
+        if (!invalidTasks.isEmpty()) {
+            violations.add(
+                "Invalid output reference: use outputs[key-name] instead of outputs.key-name — keys with dashes require bracket notation, offending tasks:" +
+                    " [" + String.join(", ", invalidTasks) + "]"
+            );
+        }
+
+        List<String> invalidOutputs = ListUtils.emptyOnNull(value.getOutputs())
+            .stream()
+            .filter(task -> checkObjectFieldsWithPatterns(task, outputsWithMinusPattern))
+            .map(task -> task.getId())
+            .collect(Collectors.toList());
+
+        if (!invalidOutputs.isEmpty()) {
+            violations.add(
+                "Invalid output reference: use outputs[key-name] instead of outputs.key-name — keys with dashes require bracket notation, offending outputs:" +
+                    " [" + String.join(", ", invalidOutputs) + "]"
+            );
+        }
+
+        if (!violations.isEmpty()) {
+            context.disableDefaultConstraintViolation();
+            context.buildConstraintViolationWithTemplate("Invalid Flow: " + String.join(", ", violations))
+                .addConstraintViolation();
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    private List<String> assetsDeclarationViolations(Flow flow) {
+        List<String> violations = new ArrayList<>();
+        flow.allTasks().filter(Objects::nonNull)
+            .forEach(task -> violations.addAll(assetsDeclarationViolations("Task", task.getId(), task.getAssets())));
+        ListUtils.emptyOnNull(flow.getTriggers()).stream().filter(Objects::nonNull)
+            .forEach(trigger -> violations.addAll(assetsDeclarationViolations("Trigger", trigger.getId(), trigger.getAssets())));
+        return violations;
+    }
+
+    private List<String> assetsDeclarationViolations(String kind, String id, AssetsDeclaration assets) {
+        if (assets == null) {
+            return List.of();
+        }
+
+        List<String> violations = new ArrayList<>();
+        violations.addAll(declaredAssetViolations(kind, id, "inputs", assets.getInputs(), AssetIdentifier.class));
+        violations.addAll(declaredAssetViolations(kind, id, "outputs", assets.getOutputs(), Asset.class));
+        return violations;
+    }
+
+    private <T> List<String> declaredAssetViolations(String kind, String id, String field, Property<List<T>> declared, Class<T> itemClass) {
+        try {
+            List<T> items = Property.asStaticList(declared, itemClass).orElse(List.of());
+            if (items.stream().anyMatch(Objects::isNull)) {
+                return List.of("%s '%s' declares a malformed `assets.%s`: an item is empty or unreadable.".formatted(kind, id, field));
+            }
+
+            return items.stream()
+                .flatMap(item -> validator.validate(item).stream())
+                .filter(violation -> !(violation.getInvalidValue() instanceof String value && PebbleUtil.containsOpeningBlockDelimiter(value)))
+                .map(violation -> "%s '%s' declares an invalid asset in `assets.%s`: `%s` %s.".formatted(kind, id, field, violation.getPropertyPath(), violation.getMessage()))
+                .toList();
+        } catch (IllegalVariableEvaluationException e) {
+            if (PebbleUtil.containsOpeningBlockDelimiter(String.valueOf(declared))) {
+                return List.of();
+            }
+
+            return List.of("%s '%s' declares a malformed `assets.%s`: %s.".formatted(kind, id, field, e.getMessage()));
+        }
+    }
+
+    protected List<String> EEViolations(Flow flow) {
+        var assetViolations = flow.allTasks().filter(task -> task != null && task.getAssets() != null)
+            .map(taskWithAssets -> "Task '" + taskWithAssets.getId() + "' can't have any `assets` because assets are only available in Enterprise Edition.")
+            .toList();
+        List<String> violations = new ArrayList<>(assetViolations);
+
+        if (!ListUtils.isEmpty(flow.getQuotas())) {
+            violations.add("Quotas are only available in Enterprise Edition.");
+        }
+
+        return violations;
+    }
+
+    /**
+     * Inputs whose type is annotated {@link EeOnly} (e.g. {@code REUSABLE_INPUTS}) are not available in the
+     * open-source edition, so a flow declaring one is rejected here rather than failing only at execution time.
+     * Recurses into {@code FORM} children. The Enterprise build overrides this to allow such inputs.
+     */
+    protected List<String> eeOnlyInputsViolations(List<Input<?>> inputs) {
+        List<String> violations = new ArrayList<>();
+        collectEeOnlyInputs(inputs, violations);
+        return violations;
+    }
+
+    private static void collectEeOnlyInputs(List<Input<?>> inputs, List<String> violations) {
+        for (Input<?> input : ListUtils.emptyOnNull(inputs)) {
+            if (input.getClass().isAnnotationPresent(EeOnly.class)) {
+                violations.add("Input '" + input.getId() + "' of type " + input.getType() + " is only available in Enterprise Edition.");
+            }
+            if (input instanceof FormInput form) {
+                collectEeOnlyInputs(form.getInputs(), violations);
+            }
+        }
+    }
+
+    private static boolean checkObjectFieldsWithPatterns(Object object, List<Pattern> patterns) {
+        if (object == null) {
+            return true;
+
+        }
+        List<Field> fields = Arrays.asList(object.getClass().getDeclaredFields());
+
+        return fields.stream()
+            .anyMatch(
+                field -> patterns.stream()
+                    .anyMatch(inputPattern ->
+                    {
+                        field.setAccessible(true);
+                        try {
+                            Optional<?> value = Optional.ofNullable(field.get(object));
+
+                            return value.filter(o -> inputPattern.matcher(o.toString()).find()).isPresent();
+
+                        } catch (IllegalAccessException e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+            );
+    }
+
+    private static void checkFlowInputsDependencyGraph(final Flow flow, final List<String> violations) {
+        if (ListUtils.isEmpty(flow.getInputs()))
+            return;
+
+        Map<String, List<String>> graph = new HashMap<>();
+        // Expand FORMs so children enter the graph keyed by their dotted path. A child referencing a sibling
+        // must write the full dotted path (e.g. 'environment.data_center'); a bare ref resolves to no node and
+        // is rejected below ("depends on a non-existent input"), so the no-auto-rewrite contract fails loudly.
+        for (Input<?> input : flow.resolvableInputs()) {
+            graph.putIfAbsent(input.getId(), new ArrayList<>());
+            if (input.getDependsOn() != null && !ListUtils.isEmpty(input.getDependsOn().inputs())) {
+                graph.get(input.getId()).addAll(input.getDependsOn().inputs());
+            }
+        }
+
+        graph.forEach((key, dependencies) ->
+        {
+            if (!dependencies.isEmpty()) {
+                dependencies.forEach(id ->
+                {
+                    if (graph.get(id) == null) {
+                        violations.add(String.format("Input with id '%s' depends on a non-existent input '%s'.", key, id));
+                    }
+                });
+            }
+            CycleDependency.findCycle(key, graph).ifPresent(list ->
+            {
+                violations.add(String.format("Cycle dependency detected for input with id '%s': %s", key, list));
+            });
+        });
+
+    }
+
+    protected static List<String> getDuplicates(List<String> taskIds) {
+        return taskIds.stream()
+            .distinct()
+            .filter(entry -> Collections.frequency(taskIds, entry) > 1)
+            .toList();
+    }
+
+    /**
+     * @return the violation formatted message of missing inputs for each trigger able to supply them
+     */
+    private Stream<String> findMissingInputsForTriggers(Flow value) {
+        if (ListUtils.emptyOnNull(value.getTriggers()).isEmpty() || ListUtils.emptyOnNull(value.getInputs()).isEmpty()) {
+            return Stream.empty();
+        }
+
+        // Inputs no execution can fill on its own, expanded to dotted leaf paths: triggers supply values keyed by
+        // the same dotted path, matching how FlowInputOutput resolves them.
+        Set<String> inputsNeedingATriggerValue = value.resolvableInputs().stream()
+            .filter(input -> input.getDefaults() == null && !Boolean.FALSE.equals(input.getRequired()))
+            .map(Data::getId)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (inputsNeedingATriggerValue.isEmpty()) {
+            return Stream.empty();
+        }
+
+        return value.getTriggers().stream()
+            .flatMap(
+                trigger -> inputsSuppliedBy(trigger).stream()
+                    .flatMap(triggerInputs ->
+                    {
+                        String missingInputs = inputsNeedingATriggerValue.stream()
+                            .filter(inputId -> !triggerInputs.supplied().containsKey(inputId))
+                            .collect(Collectors.joining(" | "));
+
+                        return missingInputs.isEmpty()
+                            ? Stream.<String> empty()
+                            : Stream.of("Missing inputs for %s Trigger '%s', missing inputs: '%s'".formatted(triggerInputs.kind(), trigger.getId(), missingInputs));
+                    })
+            );
+    }
+
+    /**
+     * Validates the literal values a flow declares for its own inputs — input {@code defaults} and the values a
+     * trigger supplies to inputs — against each input's declared type and constraints, so a type mismatch (an
+     * {@code INT} default of {@code "abc"}) or an out-of-list {@code SELECT} value is rejected at save time instead
+     * of only failing when the flow runs. Pebble expressions are left untouched: they can only be resolved at runtime.
+     */
+    private void validateDeclaredInputValues(Flow value, List<String> violations) {
+        List<Input<?>> inputs = value.resolvableInputs();
+        if (inputs.isEmpty()) {
+            return;
+        }
+
+        for (Input<?> input : inputs) {
+            if (input.getDefaults() != null) {
+                literalValueViolation(input, input.getDefaults().toString())
+                    .ifPresent(message -> violations.add("Invalid default for input '%s': %s".formatted(input.getId(), message)));
+            }
+        }
+
+        if (ListUtils.emptyOnNull(value.getTriggers()).isEmpty()) {
+            return;
+        }
+
+        Map<String, Input<?>> inputsById = inputs.stream()
+            .collect(Collectors.toMap(Data::getId, input -> input, (first, second) -> first));
+
+        for (AbstractTrigger trigger : value.getTriggers()) {
+            inputsSuppliedBy(trigger).ifPresent(triggerInputs ->
+                triggerInputs.supplied().forEach((inputId, suppliedValue) -> {
+                    Input<?> input = inputsById.get(inputId);
+                    if (input != null) {
+                        literalValueViolation(input, suppliedValue)
+                            .ifPresent(message -> violations.add(
+                                "Invalid value for input '%s' supplied by %s Trigger '%s': %s".formatted(inputId, triggerInputs.kind(), trigger.getId(), message)));
+                    }
+                }));
+        }
+    }
+
+    /**
+     * Validates literal flow output values against their declared scalar type at save time. Pebble expressions are
+     * resolved at execution time and are intentionally skipped here.
+     */
+    private void validateDeclaredOutputValues(Flow value, List<String> violations) {
+        for (Output output : ListUtils.emptyOnNull(value.getOutputs())) {
+            literalOutputValueViolation(output)
+                .ifPresent(message -> violations.add("Invalid value for output '%s': %s".formatted(output.getId(), message)));
+        }
+    }
+
+    /**
+     * @return the constraint message when {@code rawValue} — a literal default or a value a trigger supplies — cannot
+     * satisfy the input's type or its own constraints, or empty when it is valid, is a Pebble expression, or is of a
+     * type that can only be resolved at execution time (e.g. {@code FILE}, {@code SECRET} or structured types).
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Optional<String> literalValueViolation(Input<?> input, Object rawValue) {
+        if (rawValue == null) {
+            return Optional.empty();
+        }
+
+        String asString = rawValue.toString();
+        if (PebbleUtil.containsOpeningBlockDelimiter(asString)) {
+            return Optional.empty();
+        }
+
+        Object typed;
+        try {
+            typed = FlowInputOutput.parseScalarInputValue(input.getType(), rawValue).orElse(null);
+        } catch (Exception e) {
+            return Optional.of("`%s` is not a valid %s value".formatted(asString, input.getType()));
+        }
+
+        if (typed == null) {
+            return Optional.empty();
+        }
+
+        try {
+            ((Input) input).validate(typed);
+        } catch (ConstraintViolationException e) {
+            String message = e.getConstraintViolations().stream()
+                .map(ConstraintViolation::getMessage)
+                .collect(Collectors.joining(", "));
+            return Optional.of(message.isEmpty() ? "invalid value" : message);
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * @return the constraint message when a static output literal cannot satisfy the output's declared scalar type, or
+     * empty when it is valid, dynamic, or non-scalar.
+     */
+    private static Optional<String> literalOutputValueViolation(Output output) {
+        Object rawValue = output.getValue();
+        if (rawValue == null) {
+            return Optional.empty();
+        }
+
+        String asString = rawValue.toString();
+        if (PebbleUtil.containsOpeningBlockDelimiter(asString)) {
+            return Optional.empty();
+        }
+
+        try {
+            FlowInputOutput.parseScalarInputValue(output.getType(), rawValue);
+        } catch (Exception e) {
+            return Optional.of("`%s` is not a valid %s value".formatted(asString, output.getType()));
+        }
+
+        return Optional.empty();
+    }
+
+    private static Optional<TriggerInputs> inputsSuppliedBy(AbstractTrigger trigger) {
+        return switch (trigger) {
+            case Schedule schedule -> Optional.of(new TriggerInputs("Schedule", schedule.getInputs() == null ? Map.of() : schedule.getInputs()));
+            case AbstractWebhookTrigger webhook -> Optional.of(new TriggerInputs("Webhook", webhook.getInputs() == null ? Map.of() : webhook.getInputs()));
+            default -> Optional.empty();
+        };
+    }
+
+    private record TriggerInputs(String kind, Map<String, Object> supplied) {
+    }
+
+    /**
+     * Utility class to detect cycle in dependencies across flow's inputs.
+     */
+    private static final class CycleDependency {
+
+        /**
+         * Static method for finding cycles in dependencies.
+         *
+         * @param id The input ID to check.
+         * @param graph The input's dependencies.
+         * @return The optional path where a cycle was found.
+         */
+        public static Optional<List<String>> findCycle(String id, Map<String, List<String>> graph) {
+            return findCycle(id, graph, new HashSet<>(), new HashSet<>(), new ArrayList<>());
+        }
+
+        public static Optional<List<String>> findCycle(String id,
+            Map<String, List<String>> graph,
+            Set<String> visiting,
+            Set<String> visited,
+            List<String> path) {
+            if (visiting.contains(id)) {
+                // Cycle detected, return the current path that forms the cycle
+                int cycleStartIndex = path.indexOf(id);
+                return Optional.of(path.subList(cycleStartIndex, path.size()));
+            }
+
+            if (visited.contains(id)) {
+                return Optional.empty();
+            }
+
+            visiting.add(id);
+            path.add(id); // Add to current path
+
+            // Visit all the dependencies (dependsOn)
+            List<String> dependencies = graph.get(id);
+            if (dependencies != null) {
+                for (String dependency : dependencies) {
+                    Optional<List<String>> cycle = findCycle(dependency, graph, visiting, visited, path);
+                    if (cycle.isPresent()) {
+                        return cycle;
+                    }
+                }
+            }
+
+            visiting.remove(id);
+            visited.add(id);
+            path.removeLast();
+            return Optional.empty();
+        }
+    }
+}

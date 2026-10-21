@@ -1,0 +1,290 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { AppShell as MantineAppShell } from '@mantine/core';
+import { locationUtils } from '@medplum/core';
+import { MockClient, TestProject } from '@medplum/mock';
+import { MedplumProvider } from '@medplum/react-hooks';
+import { Logo } from '../Logo/Logo';
+import { act, fireEvent, render, screen, within } from '../test-utils/render';
+import { Header } from './Header';
+
+const medplum = new MockClient();
+const navigateMock = vi.fn();
+const closeMock = vi.fn();
+
+async function setup(client?: MockClient): Promise<void> {
+  await act(async () => {
+    render(
+      <MedplumProvider medplum={client ?? medplum} navigate={navigateMock}>
+        <MantineAppShell>
+          <Header logo={<Logo size={24} />} version="test.version" navbarToggle={closeMock} />
+        </MantineAppShell>
+      </MedplumProvider>
+    );
+  });
+}
+
+describe('Header', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    navigateMock.mockClear();
+    closeMock.mockClear();
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+    });
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  test('Renders', async () => {
+    await setup();
+    expect(screen.getByText('Alice Smith')).toBeInTheDocument();
+  });
+
+  test('Renders active project name', async () => {
+    // Simulate state where `auth/me` has not finished and so the explicit
+    // project resource has not loaded. In that case, we read the active project
+    // name from localStorage via `getActiveLogin()`
+    const medplum = new MockClient({ project: null });
+    window.localStorage.setItem(
+      'activeLogin',
+      JSON.stringify({
+        accessToken: 'abc',
+        refreshToken: 'xyz',
+        profile: {
+          reference: 'Practitioner/124',
+          display: 'Alice Smith',
+        },
+        project: {
+          reference: 'Project/456',
+          display: 'My Project',
+        },
+      })
+    );
+
+    await setup(medplum);
+    expect(screen.getByText('My Project')).toBeInTheDocument();
+
+    // Simulate auth loading completing. The displayed active project name
+    // should now use the value from that result. These will usually match,
+    // but could differ if the project has been renamed since the local
+    // storage was last written to.
+    await act(() => medplum.mock.setProject(TestProject));
+    expect(screen.getByText(TestProject.name)).toBeInTheDocument();
+
+    window.localStorage.removeItem('activeLogin');
+  });
+
+  test('Renders user name', async () => {
+    await setup();
+    expect(screen.getByText('Alice Smith')).toBeInTheDocument();
+  });
+
+  test('Open and close the user menu', async () => {
+    await setup();
+
+    expect(screen.queryByText('Sign out')).not.toBeInTheDocument();
+
+    const menuButton = screen.getByText('Alice Smith');
+
+    await act(async () => {
+      fireEvent.click(menuButton);
+    });
+
+    expect(await screen.findByText('Sign out')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(menuButton);
+    });
+  });
+
+  test('Switch profile', async () => {
+    const reloadSpy = vi.spyOn(locationUtils, 'reload').mockImplementation(() => {});
+
+    window.localStorage.setItem(
+      'activeLogin',
+      JSON.stringify({
+        accessToken: 'abc',
+        refreshToken: 'xyz',
+        profile: {
+          reference: 'Practitioner/124',
+          display: 'Alice Smith',
+        },
+        project: {
+          reference: 'Project/456',
+          display: 'My Project',
+        },
+      })
+    );
+    window.localStorage.setItem(
+      'logins',
+      JSON.stringify([
+        {
+          accessToken: 'abc',
+          refreshToken: 'xyz',
+          profile: {
+            reference: 'Practitioner/124',
+            display: 'Alice Smith',
+          },
+          project: {
+            reference: 'Project/456',
+            display: 'My Project',
+          },
+        },
+        {
+          accessToken: 'def',
+          refreshToken: '123',
+          profile: {
+            reference: 'Practitioner/789',
+            display: 'Alice Smith',
+          },
+          project: {
+            reference: 'Project/789',
+            display: 'My Other Project',
+          },
+        },
+      ])
+    );
+
+    await setup();
+
+    // Click on the profile name to open the menu
+    await act(async () => {
+      fireEvent.click(screen.getByText('Alice Smith'));
+    });
+
+    expect((await screen.findAllByText('Project 123')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('My Other Project')).toBeInTheDocument();
+
+    // Click on other project to switch
+    await act(async () => {
+      fireEvent.click(screen.getByText('My Other Project'));
+    });
+
+    expect(reloadSpy).toHaveBeenCalled();
+  });
+
+  test('Scrolls extra projects and keeps account actions pinned', async () => {
+    window.localStorage.setItem(
+      'activeLogin',
+      JSON.stringify({
+        accessToken: 'abc',
+        refreshToken: 'xyz',
+        profile: { reference: 'Practitioner/124', display: 'Alice Smith' },
+        project: { reference: 'Project/456', display: 'My Project' },
+      })
+    );
+    window.localStorage.setItem(
+      'logins',
+      JSON.stringify([
+        {
+          accessToken: 'abc',
+          refreshToken: 'xyz',
+          profile: { reference: 'Practitioner/124', display: 'Alice Smith' },
+          project: { reference: 'Project/456', display: 'My Project' },
+        },
+        ...Array.from({ length: 12 }, (_, index) => ({
+          accessToken: `token-${index}`,
+          refreshToken: `refresh-${index}`,
+          profile: { reference: 'Practitioner/124', display: 'Alice Smith' },
+          project: { reference: `Project/stacked-${index}`, display: `Stacked Project ${index}` },
+        })),
+      ])
+    );
+
+    await setup();
+    await openMenu();
+
+    const projectList = screen.getByRole('group', { name: 'Projects', hidden: true });
+    expect(within(projectList).getByText('Stacked Project 0')).toBeInTheDocument();
+    expect(within(projectList).getByText('Stacked Project 11')).toBeInTheDocument();
+    expect(within(projectList).queryByText('Sign out')).not.toBeInTheDocument();
+    expect(within(projectList).queryByText('Switch to another project')).not.toBeInTheDocument();
+    expect(screen.getByText('Sign out')).toBeInTheDocument();
+  });
+
+  test('Switch to another project', async () => {
+    await setup();
+    await openMenu();
+
+    expect(screen.getByText('Switch to another project')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Switch to another project'));
+    });
+
+    expect(navigateMock).toHaveBeenCalledWith('/signin');
+  });
+
+  test('Account settings', async () => {
+    await setup();
+    await openMenu();
+
+    expect(screen.getByText('Account settings')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Account settings'));
+    });
+
+    expect(navigateMock).toHaveBeenCalledWith('/Practitioner/124');
+  });
+
+  test('Sign out', async () => {
+    await setup();
+    await openMenu();
+
+    expect(screen.getByText('Sign out')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Sign out'));
+    });
+
+    expect(navigateMock).toHaveBeenCalledWith('/signin');
+  });
+
+  test('Dark mode', async () => {
+    await setup();
+    await openMenu();
+
+    // Click "Dark"
+    const darkButton = await screen.findByLabelText('Dark');
+    await act(async () => {
+      fireEvent.click(darkButton);
+    });
+
+    // Get the root <html> element
+    const html = document.querySelector('html');
+    expect(html).toHaveAttribute('data-mantine-color-scheme', 'dark');
+  });
+
+  test('Layout version toggle reloads', async () => {
+    const reloadSpy = vi.spyOn(locationUtils, 'reload').mockImplementation(() => {});
+    await setup();
+    await openMenu();
+
+    const layoutControl = screen.getByLabelText('App shell layout version');
+    await act(async () => {
+      fireEvent.click(within(layoutControl).getByText('v2'));
+    });
+
+    expect(localStorage['appShellLayoutVersion']).toBe('v2');
+    expect(reloadSpy).toHaveBeenCalled();
+  });
+});
+
+function isMenuOpen(): boolean {
+  return !!screen.queryByText('Sign out');
+}
+
+async function openMenu(): Promise<void> {
+  if (!isMenuOpen()) {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'User menu' }));
+    });
+
+    await screen.findByText('Sign out');
+  }
+}

@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { isUUID } from '@medplum/core';
+import express from 'express';
+import request from 'supertest';
+import { initApp, shutdownApp } from './app';
+import { getConfig, loadTestConfig } from './config/loader';
+
+const app = express();
+
+describe('Well Known', () => {
+  beforeAll(async () => {
+    const config = await loadTestConfig();
+    await initApp(app, config);
+  });
+
+  afterAll(async () => {
+    await shutdownApp();
+  });
+
+  test('Get /.well-known/jwks.json', async () => {
+    const res = await request(app).get('/.well-known/jwks.json');
+    expect(res).toHaveStatus(200);
+
+    const keys = res.body.keys;
+    expect(keys).toBeDefined();
+    expect(Array.isArray(keys)).toStrictEqual(true);
+    expect(keys.length).toBeGreaterThanOrEqual(1);
+
+    for (const key of keys) {
+      expect(key.kid).toBeDefined();
+      expect(key.kid.length).toStrictEqual(36); // kid should be a UUID
+      expect(isUUID(key.kid)).toStrictEqual(true);
+      expect(key.alg).toMatch(/^(RS256|ES256|ES384)$/);
+      expect(key.kty).toMatch(/^(RSA|EC)$/);
+      expect(key.use).toStrictEqual('sig');
+
+      if (key.kty === 'EC') {
+        // Make sure public key properties are there
+        expect(key.x).toBeDefined();
+        expect(key.y).toBeDefined();
+        expect(key.crv).toBeDefined();
+
+        // Make sure private key properties are *NOT* there
+        expect(key.d).toBeUndefined();
+        expect(key.x5c).toBeUndefined();
+        expect(key.x5t).toBeUndefined();
+        expect(key.x5t256).toBeUndefined();
+      } else if (key.kty === 'RSA') {
+        // Make sure public key properties are there
+        expect(key.e).toBeDefined();
+        expect(key.n).toBeDefined();
+
+        // Make sure private key properties are *NOT* there
+        expect(key.d).toBeUndefined();
+        expect(key.p).toBeUndefined();
+        expect(key.q).toBeUndefined();
+        expect(key.dp).toBeUndefined();
+        expect(key.dq).toBeUndefined();
+        expect(key.qi).toBeUndefined();
+      }
+    }
+  });
+
+  test('Get /.well-known/openid-configuration', async () => {
+    const res = await request(app).get('/.well-known/openid-configuration');
+    expect(res).toHaveStatus(200);
+    expect(res.body.issuer).toBeDefined();
+    expect(res.body.authorization_endpoint).toBeDefined();
+    expect(res.body.token_endpoint).toBeDefined();
+    expect(res.body.userinfo_endpoint).toBeDefined();
+    expect(res.body.jwks_uri).toBeDefined();
+    expect(res.body.id_token_signing_alg_values_supported).toBeDefined();
+    expect(res.body.response_types_supported).toBeDefined();
+    expect(res.body.subject_types_supported).toBeDefined();
+  });
+
+  test('Get project-scoped OpenID configuration', async () => {
+    const projectId = '00000000-0000-0000-0000-000000000000';
+    const projectBaseUrl = `${getConfig().baseUrl}projects/${projectId}/`;
+    const res = await request(app).get(`/projects/${projectId}/.well-known/openid-configuration`);
+    expect(res).toHaveStatus(200);
+    expect(res.body).toMatchObject({
+      issuer: projectBaseUrl,
+      authorization_endpoint: `${projectBaseUrl}oauth2/authorize`,
+      token_endpoint: `${projectBaseUrl}oauth2/token`,
+      userinfo_endpoint: `${projectBaseUrl}oauth2/userinfo`,
+      jwks_uri: `${projectBaseUrl}.well-known/jwks.json`,
+      introspection_endpoint: `${projectBaseUrl}oauth2/introspect`,
+      registration_endpoint: `${projectBaseUrl}oauth2/register`,
+    });
+  });
+
+  test('Get project-scoped SMART configuration', async () => {
+    const projectId = '00000000-0000-0000-0000-000000000000';
+    const projectBaseUrl = `${getConfig().baseUrl}projects/${projectId}/`;
+    const res = await request(app).get(`/projects/${projectId}/.well-known/smart-configuration`);
+    expect(res).toHaveStatus(200);
+    expect(res.body).toMatchObject({
+      issuer: projectBaseUrl,
+      authorization_endpoint: `${projectBaseUrl}oauth2/authorize`,
+      token_endpoint: `${projectBaseUrl}oauth2/token`,
+      jwks_uri: `${projectBaseUrl}.well-known/jwks.json`,
+      introspection_endpoint: `${projectBaseUrl}oauth2/introspect`,
+    });
+  });
+
+  test('Get /.well-known/oauth-authorization-server', async () => {
+    const res = await request(app).get('/.well-known/oauth-authorization-server');
+    expect(res).toHaveStatus(200);
+    expect(res.body.issuer).toBeDefined();
+    expect(res.body.authorization_endpoint).toBeDefined();
+    expect(res.body.token_endpoint).toBeDefined();
+    expect(res.body.userinfo_endpoint).toBeDefined();
+    expect(res.body.jwks_uri).toBeDefined();
+    expect(res.body.id_token_signing_alg_values_supported).toBeDefined();
+    expect(res.body.response_types_supported).toBeDefined();
+    expect(res.body.subject_types_supported).toBeDefined();
+  });
+
+  test('Get /.well-known/oauth-protected-resource', async () => {
+    const res = await request(app).get('/.well-known/oauth-protected-resource');
+    expect(res).toHaveStatus(200);
+    expect(res.body.resource).toBeDefined();
+    expect(res.body.issuer).toBeDefined();
+    expect(res.body.authorization_servers).toBeDefined();
+    expect(res.body.scopes_supported).toBeDefined();
+    expect(res.body.bearer_methods_supported).toBeDefined();
+    expect(res.body.introspection_endpoint).toBeDefined();
+  });
+
+  test('Get project-scoped protected resource configuration', async () => {
+    const projectId = '00000000-0000-0000-0000-000000000000';
+    const projectBaseUrl = `${getConfig().baseUrl}projects/${projectId}/`;
+    const res = await request(app).get(`/projects/${projectId}/.well-known/oauth-protected-resource`);
+    expect(res).toHaveStatus(200);
+    expect(res.body).toMatchObject({
+      resource: projectBaseUrl,
+      issuer: projectBaseUrl,
+      authorization_servers: [projectBaseUrl],
+      introspection_endpoint: `${projectBaseUrl}oauth2/introspect`,
+    });
+  });
+
+  test('Protected resource with custom request', async () => {
+    const res = await request(app).get(
+      '/.well-known/oauth-protected-resource?resource=http://localhost:8103/fhir/R4/Patient/123'
+    );
+    expect(res).toHaveStatus(200);
+    expect(res.body.resource).toBe('http://localhost:8103/fhir/R4/Patient/123');
+  });
+
+  test('Protected resource with invalid resource', async () => {
+    const res = await request(app).get('/.well-known/oauth-protected-resource?resource=https://example.com/invalid');
+    expect(res).toHaveStatus(400);
+    expect(res.text).toBe('Invalid resource URL');
+  });
+
+  test('Protected resource with resource array', async () => {
+    const res = await request(app).get('/.well-known/oauth-protected-resource?resource=a&resource=b&resource=c');
+    expect(res).toHaveStatus(400);
+    expect(res.text).toBe('Invalid resource URL');
+  });
+});

@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { resolveId } from '@medplum/core';
+import type { Project } from '@medplum/fhirtypes';
+import { runInLambda } from '../cloud/aws/execute';
+import { runInLambdaStreaming } from '../cloud/aws/executestreaming';
+import { executeFissionBot } from '../cloud/fission/execute';
+import { getConfig } from '../config/loader';
+import { getGlobalSystemRepo } from '../fhir/repo';
+import { recordHistogramValue } from '../otel/otel';
+import { AuditEventOutcome, createBotAuditEvent } from '../util/auditevent';
+import type { BotExecutionContext, BotExecutionRequest, BotExecutionResult } from './types';
+import {
+  getBotAccessToken,
+  getBotSecrets,
+  isBotEnabledForProject,
+  normalizeBotExecutionResult,
+  writeBotInputToStorage,
+} from './utils';
+import { runInVmContext } from './vmcontext';
+
+/**
+ * Executes a Bot.
+ * This method ensures the bot is valid and enabled.
+ * This method dispatches to the appropriate execution method.
+ * @param request - The bot request.
+ * @returns The bot execution result.
+ */
+export async function executeBot(request: BotExecutionRequest): Promise<BotExecutionResult> {
+  const { bot, runAs } = request;
+  const startTime = request.requestTime ?? new Date().toISOString();
+
+  let result: BotExecutionResult;
+
+  const execStart = process.hrtime.bigint();
+  // The bot runs with runAs's identity in runAs's project, so that is the project entitled to
+  // run bots -- not the one that happens to own the bot.
+  const project =
+    request.runAsProject && request.runAsProject.id === resolveId(runAs.project)
+      ? request.runAsProject
+      : await getGlobalSystemRepo().readReference<Project>(runAs.project);
+  if (isBotEnabledForProject(project)) {
+    if (getConfig().storeBotInput) {
+      await writeBotInputToStorage(request);
+    }
+
+    const context: BotExecutionContext = {
+      ...request,
+      accessToken: await getBotAccessToken(bot, runAs),
+      secrets: await getBotSecrets(bot, runAs),
+    };
+
+    if (bot.runtimeVersion === 'awslambda') {
+      if (bot.streamingEnabled && request.responseStream) {
+        result = await runInLambdaStreaming(context);
+      } else if (bot.streamingEnabled) {
+        result = { success: false, logResult: 'Streaming bot requires Accept: text/event-stream header' };
+      } else {
+        result = await runInLambda(context);
+      }
+    } else if (bot.runtimeVersion === 'vmcontext') {
+      result = await runInVmContext(context);
+    } else if (bot.runtimeVersion === 'fission') {
+      result = await executeFissionBot(context);
+    } else {
+      result = { success: false, logResult: 'Unsupported bot runtime' };
+    }
+  } else {
+    result = { success: false, logResult: 'Bots not enabled' };
+  }
+  result = normalizeBotExecutionResult(result);
+  const executionTime = Number(process.hrtime.bigint() - execStart) / 1e9; // Report duration in seconds
+
+  const attributes = { project: bot.meta?.project, bot: bot.id, outcome: result.success ? 'success' : 'failure' };
+  recordHistogramValue('medplum.bot.execute.time', executionTime, { attributes });
+
+  await createBotAuditEvent(
+    request,
+    project,
+    startTime,
+    result.success ? AuditEventOutcome.Success : AuditEventOutcome.MinorFailure,
+    result.logResult
+  );
+  return result;
+}

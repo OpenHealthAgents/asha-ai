@@ -1,0 +1,59 @@
+.panel {
+  height: 100%;
+}
+
+[data-mantine-color-scheme='dark'] .panel {
+  background-color: var(--mantine-color-body);
+}
+
+[data-mantine-color-scheme='light'] .panel {
+  background-color: var(--mantine-color-white);
+}
+
+.headerLink,
+.headerContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.headerLink {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.headerLink:hover {
+  text-decoration: none;
+}
+
+.actionsButton {
+  flex-shrink: 0;
+}
+
+.actionsButton[data-expanded] {
+  background-color: var(--mantine-primary-color-light);
+  color: var(--mantine-primary-color-light-color);
+}
+
+.patientSummaryBadge {
+  cursor: pointer;
+}
+
+.patientSummaryHeader {
+  width: 100%;
+  cursor: default;
+}
+
+.patientSummaryHeader :global(.mantine-ActionIcon-root),
+.patientSummaryHeader :global(.mantine-Text-root) {
+  cursor: pointer;
+  margin: 0;
+}
+
+.patientSummaryCollapseIcon {
+  transition: transform 0.2s;
+}
+
+.patientSummaryCollapseIcon.collapsed {
+  transform: rotate(-90deg);
+}

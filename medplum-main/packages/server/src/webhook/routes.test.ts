@@ -1,0 +1,393 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import type { WithId } from '@medplum/core';
+import { allOk, ContentType, createReference } from '@medplum/core';
+import type { AccessPolicy, Bot, Project, ProjectMembership } from '@medplum/fhirtypes';
+import { randomUUID } from 'crypto';
+import express from 'express';
+import request from 'supertest';
+import { initApp, shutdownApp } from '../app';
+import { loadTestConfig } from '../config/loader';
+import { createTestProject } from '../test.setup';
+
+const cjsCode = `
+exports.handler = async function (medplum, event) {
+  console.log(JSON.stringify(event));
+  return event.headers["x-test-return-event"] ? { input: event.input } : event.input;
+};
+`;
+
+const binaryResponseCode = `
+exports.handler = async function (medplum, event) {
+  // Use a simple base64-encoded string
+  return {
+    resourceType: 'Binary',
+    contentType: 'text/xml',
+    data: 'PFJlc3BvbnNlPjxTYXk+SGVsbG8sIHdvcmxkITwvU2F5PjwvUmVzcG9uc2U+'// Base64 encoding of <Response><Say>Hello, world!</Say></Response>
+  };
+};
+`;
+
+describe('Anonymous webhooks', () => {
+  let app: express.Express;
+  let project: WithId<Project>;
+  let accessPolicy: WithId<AccessPolicy>;
+  let adminMembership: WithId<ProjectMembership>;
+  let accessToken: string;
+  let bot: WithId<Bot>;
+  let botMembership: WithId<ProjectMembership>;
+  let binaryResponseBot: WithId<Bot>;
+  let binaryResponseBotMembership: WithId<ProjectMembership>;
+
+  beforeAll(async () => {
+    app = express();
+    const config = await loadTestConfig();
+    config.vmContextBotsEnabled = true;
+    await initApp(app, config);
+
+    const testSetup = await createTestProject({
+      withAccessToken: true,
+      withClient: true,
+      membership: { admin: true },
+      accessPolicy: {
+        resource: [{ resourceType: '*' }],
+      },
+    });
+    project = testSetup.project;
+    accessPolicy = testSetup.accessPolicy;
+    adminMembership = testSetup.membership;
+    accessToken = testSetup.accessToken;
+
+    // Create the bot
+    const res1 = await request(app)
+      .post('/admin/projects/' + testSetup.project.id + '/bot')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .type('json')
+      .send({
+        name: 'Alice personal bot',
+        description: 'Alice bot description',
+        accessPolicy: createReference(testSetup.accessPolicy),
+      });
+    expect(res1).toHaveStatus(201);
+    expect(res1.body.resourceType).toBe('Bot');
+    expect(res1.body.id).toBeDefined();
+    bot = res1.body as WithId<Bot>;
+
+    // Deploy the bot
+    const res2 = await request(app)
+      .post(`/fhir/R4/Bot/${bot.id}/$deploy`)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .send({
+        code: cjsCode,
+      });
+    expect(res2).toHaveStatus(200);
+
+    // Get the bot ProjectMembership
+    const res3 = await request(app)
+      .get(`/fhir/R4/ProjectMembership?profile=Bot/${bot.id}`)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res3).toHaveStatus(200);
+    expect(res3.body.entry).toBeDefined();
+    expect(res3.body.entry.length).toBe(1);
+    botMembership = res3.body.entry[0].resource as WithId<ProjectMembership>;
+
+    // Create a bot that returns a binary response with specified content type
+    const res4 = await request(app)
+      .post('/admin/projects/' + testSetup.project.id + '/bot')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .type('json')
+      .send({
+        name: 'Binary response bot',
+        description: 'Binary response bot description',
+        accessPolicy: createReference(testSetup.accessPolicy),
+      });
+    expect(res4).toHaveStatus(201);
+    expect(res4.body.resourceType).toBe('Bot');
+    expect(res4.body.id).toBeDefined();
+    binaryResponseBot = res4.body as WithId<Bot>;
+
+    // Deploy the binary response bot
+    const res5 = await request(app)
+      .post(`/fhir/R4/Bot/${binaryResponseBot.id}/$deploy`)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .send({
+        code: binaryResponseCode,
+      });
+    expect(res5).toHaveStatus(200);
+
+    // Get the bot ProjectMembership for the binary response bot
+    const res6 = await request(app)
+      .get(`/fhir/R4/ProjectMembership?profile=Bot/${binaryResponseBot.id}`)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res6).toHaveStatus(200);
+    expect(res6.body.entry).toBeDefined();
+    expect(res6.body.entry.length).toBe(1);
+    binaryResponseBotMembership = res6.body.entry[0].resource as WithId<ProjectMembership>;
+
+    // Update the bot to opt-in to public webhook access
+    const res7 = await request(app)
+      .patch(`/fhir/R4/Bot/${bot.id}`)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.JSON_PATCH)
+      .send([
+        {
+          op: 'add',
+          path: '/publicWebhook',
+          value: true,
+        },
+      ]);
+    expect(res7).toHaveStatus(200);
+
+    // Do the same for the binary response bot
+    const res8 = await request(app)
+      .patch(`/fhir/R4/Bot/${binaryResponseBot.id}`)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .send([
+        {
+          op: 'add',
+          path: '/publicWebhook',
+          value: true,
+        },
+      ]);
+    expect(res8).toHaveStatus(200);
+  });
+
+  afterAll(async () => {
+    await shutdownApp();
+  });
+
+  test.each(['/webhook/', '/api/webhook/', '/projects/{projectId}/webhook/', '/api/projects/{projectId}/webhook/'])(
+    'Preserves parsed JSON by default through VM execution at %s',
+    async (prefix) => {
+      const rawBody = '{ "greeting" : "café 🌍", "escaped": "\\u0061" }\n';
+      const res = await request(app)
+        .post(prefix.replace('{projectId}', project.id) + botMembership.id)
+        .set('Content-Type', ContentType.JSON)
+        .set('x-test-return-event', 'true')
+        .send(rawBody);
+      expect(res).toHaveStatus(200);
+      expect(res.body).toEqual({ input: JSON.parse(rawBody) });
+    }
+  );
+
+  test('Persists the raw-input setting and selects the input representation', async () => {
+    const rawBody = '{ "value": 1.00 }\n';
+    try {
+      for (const enabled of [false, true]) {
+        const update = await request(app)
+          .patch(`/fhir/R4/Bot/${bot.id}`)
+          .set('Authorization', 'Bearer ' + accessToken)
+          .set('Content-Type', ContentType.JSON_PATCH)
+          .send([{ op: 'add', path: '/rawBody', value: enabled }]);
+        expect(update).toHaveStatus(200);
+        expect(update.body.rawBody).toBe(enabled);
+
+        const response = await request(app)
+          .post(`/webhook/${botMembership.id}`)
+          .set('Content-Type', ContentType.JSON)
+          .set('x-test-return-event', 'true')
+          .send(rawBody);
+        expect(response).toHaveStatus(200);
+        expect(response.body).toEqual(enabled ? { input: rawBody } : { input: { value: 1 } });
+      }
+    } finally {
+      const reset = await request(app)
+        .patch(`/fhir/R4/Bot/${bot.id}`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.JSON_PATCH)
+        .send([{ op: 'remove', path: '/rawBody' }]);
+      expect(reset).toHaveStatus(200);
+    }
+  });
+
+  test('Does not capture raw body for non-JSON webhooks', async () => {
+    const res = await request(app)
+      .post(`/webhook/${botMembership.id}`)
+      .set('Content-Type', ContentType.TEXT)
+      .set('x-test-return-event', 'true')
+      .send('hello');
+    expect(res).toHaveStatus(200);
+    expect(res.type).toBe(ContentType.TEXT);
+    expect(JSON.parse(res.text)).toEqual({ input: 'hello' });
+  });
+
+  test('Falls back to parsed body when rawBody is enabled but content type is not JSON', async () => {
+    try {
+      const update = await request(app)
+        .patch(`/fhir/R4/Bot/${bot.id}`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.JSON_PATCH)
+        .send([{ op: 'add', path: '/rawBody', value: true }]);
+      expect(update).toHaveStatus(200);
+
+      const res = await request(app)
+        .post(`/webhook/${botMembership.id}`)
+        .set('Content-Type', ContentType.TEXT)
+        .set('x-test-return-event', 'true')
+        .send('hello');
+      expect(res).toHaveStatus(200);
+      expect(JSON.parse(res.text)).toEqual({ input: 'hello' });
+    } finally {
+      const reset = await request(app)
+        .patch(`/fhir/R4/Bot/${bot.id}`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.JSON_PATCH)
+        .send([{ op: 'remove', path: '/rawBody' }]);
+      expect(reset).toHaveStatus(200);
+    }
+  });
+
+  test('Does not capture raw body for authenticated execute', async () => {
+    const res = await request(app)
+      .post(`/fhir/R4/Bot/${bot.id}/$execute`)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.JSON)
+      .set('x-test-return-event', 'true')
+      .send('{ "greeting" : "hello" }');
+    expect(res).toHaveStatus(200);
+    expect(res.body).toEqual({ input: { greeting: 'hello' } });
+  });
+
+  test('Missing invalid ID', async () => {
+    const res = await request(app)
+      .post(`/webhook/${randomUUID()}`)
+      .set('Content-Type', ContentType.TEXT)
+      .set('x-signature', 'signature')
+      .send('input');
+    expect(res).toHaveStatus(404);
+  });
+
+  test('Non-bot project membership', async () => {
+    const res = await request(app)
+      .post(`/webhook/${adminMembership.id}`)
+      .set('Content-Type', ContentType.TEXT)
+      .set('x-signature', 'signature')
+      .send('input');
+    expect(res).toHaveStatus(403);
+    expect(res.text).toStrictEqual('ProjectMembership must be for a Bot resource');
+  });
+
+  test('Success with default result', async () => {
+    const res = await request(app)
+      .post(`/webhook/${botMembership.id}`)
+      .set('Content-Type', ContentType.TEXT)
+      .set('x-signature', 'signature')
+      .send('input');
+    expect(res).toHaveStatus(200);
+  });
+
+  test('Success with OperationOutcome', async () => {
+    const res = await request(app)
+      .post(`/webhook/${botMembership.id}`)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('x-signature', 'signature')
+      .send(allOk);
+    expect(res).toHaveStatus(200);
+  });
+
+  test('Response contains a body', async () => {
+    const input = { test: 'response' };
+    const res = await request(app)
+      .post(`/webhook/${botMembership.id}`)
+      .set('Content-Type', ContentType.JSON)
+      .set('x-signature', 'signature')
+      .send(JSON.stringify(input));
+    expect(res.body).toEqual(input);
+    expect(res.header['content-type']).toContain('application/json');
+  });
+
+  test('Response as as a binary with content type text/xml', async () => {
+    const input = { test: 'response' };
+    const res = await request(app)
+      .post(`/webhook/${binaryResponseBotMembership.id}`)
+      .set('Content-Type', ContentType.JSON)
+      .set('x-signature', 'signature')
+      .send(input);
+    expect(res).toHaveStatus(200);
+    expect(res.header['content-type']).toContain('text/xml');
+    expect(res.text.trim()).toBe('<Response><Say>Hello, world!</Say></Response>');
+  });
+
+  test('Bot without publicWebhook flag', async () => {
+    const res1 = await request(app)
+      .post('/admin/projects/' + project.id + '/bot')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .type('json')
+      .send({
+        name: 'Alice personal bot',
+        description: 'Alice bot description',
+        accessPolicy: createReference(accessPolicy),
+      });
+    expect(res1).toHaveStatus(201);
+    expect(res1.body.resourceType).toBe('Bot');
+    expect(res1.body.id).toBeDefined();
+
+    const botWithoutPublicWebhook = res1.body as WithId<Bot>;
+
+    const res2 = await request(app)
+      .get(`/fhir/R4/ProjectMembership?profile=Bot/${botWithoutPublicWebhook.id}`)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res2).toHaveStatus(200);
+    expect(res2.body.entry).toBeDefined();
+    expect(res2.body.entry.length).toBe(1);
+
+    const projectMembership = res2.body.entry[0].resource as WithId<ProjectMembership>;
+
+    const res3 = await request(app)
+      .post(`/webhook/${projectMembership.id}`)
+      .set('Content-Type', ContentType.TEXT)
+      .set('x-signature', 'signature')
+      .send('input');
+    expect(res3).toHaveStatus(403);
+    expect(res3.text).toStrictEqual('Bot is not configured for public webhook access');
+  });
+
+  test('Bot without access policy', async () => {
+    const res1 = await request(app)
+      .post('/admin/projects/' + project.id + '/bot')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .type('json')
+      .send({
+        name: 'Alice personal bot',
+        description: 'Alice bot description',
+      });
+    expect(res1).toHaveStatus(201);
+    expect(res1.body.resourceType).toBe('Bot');
+    expect(res1.body.id).toBeDefined();
+
+    const botWithoutPublicWebhook = res1.body as WithId<Bot>;
+
+    const res2 = await request(app)
+      .get(`/fhir/R4/ProjectMembership?profile=Bot/${botWithoutPublicWebhook.id}`)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res2).toHaveStatus(200);
+    expect(res2.body.entry).toBeDefined();
+    expect(res2.body.entry.length).toBe(1);
+
+    const projectMembership = res2.body.entry[0].resource as WithId<ProjectMembership>;
+
+    const res3 = await request(app)
+      .patch(`/fhir/R4/Bot/${botWithoutPublicWebhook.id}`)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.JSON_PATCH)
+      .send([
+        {
+          op: 'add',
+          path: '/publicWebhook',
+          value: true,
+        },
+      ]);
+    expect(res3).toHaveStatus(200);
+
+    const res4 = await request(app)
+      .post(`/webhook/${projectMembership.id}`)
+      .set('Content-Type', ContentType.TEXT)
+      .set('x-signature', 'signature')
+      .send('input');
+    expect(res4).toHaveStatus(403);
+    expect(res4.text).toStrictEqual('ProjectMembership must have an Access Policy');
+  });
+});

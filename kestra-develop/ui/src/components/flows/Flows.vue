@@ -1,0 +1,784 @@
+<template>
+    <TopNavBar v-if="topbar" :title="routeInfo.title">
+        <template #actions>
+            <NavBarActions>
+                <NavBarAction v-if="canRead" :icon="Download" :label="$t('export_csv')" @click="exportFlowsAsStream(route.query)" />
+                <NavBarAction :icon="Upload" :label="$t('import')" @click="file?.click()" />
+                <NavBarAction :icon="TextBoxSearch" :to="{name: 'flows/search'}" :label="$t('source search')" />
+
+                <template #primary>
+                    <input ref="file" type="file" accept=".zip, .yml, .yaml" @change="importFlows()" class="file-input">
+                    <NavBarAction
+                        v-if="canCreate"
+                        type="primary"
+                        :icon="Plus"
+                        :to="{name: 'flows/create', query: {namespace: $route.query.namespace}}"
+                        :label="$t('create')"
+                        data-test="flows-create"
+                    />
+                </template>
+            </NavBarActions>
+        </template>
+    </TopNavBar>
+    <section :class="{'full-container': fitHeightResolved}">
+        <KsDataTable
+            ref="dataTable"
+            :loadData="loadData"
+            :data="flowStore.flows"
+            :total="flowStore.total"
+            :currentPage="urlPage"
+            :pageSize="urlSize"
+            :defaultSort="{prop: 'id', order: 'ascending'}"
+            @page-changed="({page, size}: {page: number; size: number}) => router.push({query: {...route.query, page: String(page), size: String(size)}})"
+            @ready="ready = true"
+            @row-click="onRowClick"
+            :mobileColumns="mobileColumns"
+            @sort-change="({prop, order}: {prop: string | null; order: string | null}) => router.push({query: {...route.query, sort: `${prop}:${order === 'descending' ? 'desc' : 'asc'}`}})"
+            :rowClassName="rowClasses"
+            :selectable="canCheck"
+            :selectionMapper="selectionMapper"
+            :no-data-text="$t('no_results.flows')"
+            class="flows-table"
+            :rowKey="(row: Flow) => `${row.namespace}-${row.id}`"
+            :fitHeight="fitHeightResolved"
+        >
+            <template #top>
+                <KSFilter
+                    :configuration="filterConfiguration ?? flowFilter"
+                    :properties="{
+                        shown: true,
+                        columns: optionalColumns,
+                        storageKey: 'flows'
+                    }"
+                    :prefix="'flows'"
+                    :tableOptions="{
+                        columns: {shown: true},
+                        chart: {shown: false},
+                        refresh: {shown: true, callback: refresh}
+                    }"
+                    @update-properties="updateDisplayColumns"
+                    :defaultScope="defaultScopeFilter"
+                />
+            </template>
+
+            <template #bulk-actions>
+                <KsButton v-if="canRead" :icon="Download" @click="exportFlows()">
+                    {{ $t("export") }}
+                </KsButton>
+                <KsButton v-if="canDelete" @click="deleteFlows" :icon="TrashCan">
+                    {{ $t("delete") }}
+                </KsButton>
+                <KsButton
+                    v-if="canUpdate && anyFlowDisabled"
+                    @click="enableFlows"
+                    :icon="FileDocumentCheckOutline"
+                >
+                    {{ $t("enable") }}
+                </KsButton>
+                <KsButton
+                    v-if="canUpdate && anyFlowEnabled"
+                    @click="disableFlows"
+                    :icon="FileDocumentRemoveOutline"
+                >
+                    {{ $t("disable") }}
+                </KsButton>
+                <component
+                    :is="flowsExtension.bulkAction"
+                    v-if="flowsExtension.bulkAction && !dataTable?.queryBulkAction"
+                    :flows="dataTable?.selection ?? []"
+                />
+            </template>
+
+            <KsTableColumn
+                prop="id"
+                sortable="custom"
+                :sortOrders="['ascending', 'descending']"
+                :label="$t('id')"
+            >
+                <template #default="scope">
+                    <div class="flow-id">
+                        <router-link
+                            :to="{
+                                name: 'flows/update',
+                                params: {
+                                    namespace: scope.row.namespace,
+                                    id: scope.row.id,
+                                },
+                            }"
+                            class="flow-link"
+                        >
+                            <BreakableText :value="scope.row.id" />
+                        </router-link>
+                        <KsTag size="small" v-if="scope.row.draft" class="draft-tag" plain>
+                            <CircleOpacity />
+                            {{ $t('draft') }}
+                        </KsTag>
+                        <MarkdownTooltip
+                            :id="scope.row.namespace +
+                                '-' +
+                                scope.row.id
+                            "
+                            :description="scope.row.description"
+                            :title="scope.row.namespace +
+                                '.' +
+                                scope.row.id
+                            "
+                        />
+                    </div>
+                </template>
+            </KsTableColumn>
+
+            <template v-for="colProp in displayColumns" :key="colProp">
+                <KsTableColumn
+                    v-if="colProp === 'labels'"
+                    :label="$t('labels')"
+                >
+                    <template #default="scope">
+                        <Labels
+                            :labels="filterHiddenLabels(scope.row.labels, miscStore.configs?.hiddenLabelsPrefixes, route.query)"
+                            :max="3"
+                            @click.prevent.stop
+                        />
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="colProp === 'namespace'"
+                    prop="namespace"
+                    sortable="custom"
+                    :sortOrders="['ascending', 'descending']"
+                    :label="$t('namespace')"
+                >
+                    <template #default="scope">
+                        <KsEntityLink
+                            v-if="scope.row?.namespace"
+                            entity="namespace"
+                            :value="scope.row.namespace"
+                            :to="{name: 'namespaces/update', params: {id: scope.row.namespace}}"
+                        />
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="colProp === 'state.startDate' && user?.hasAny(resource.EXECUTION)"
+                    prop="state.startDate"
+                    :label="$t('last execution date')"
+                >
+                    <template #default="scope">
+                        <div @click.prevent.stop>
+                            <router-link
+                                v-if="lastExecutionByFlowReady && getLastExecution(scope.row as Flow)"
+                                :to="{
+                                    name: 'executions/update',
+                                    params: {
+                                        namespace: scope.row.namespace,
+                                        flowId: scope.row.id,
+                                        id: getLastExecution(scope.row as Flow)!.id
+                                    }
+                                }"
+                            >
+                                <KsDateAgo :date="getLastExecution(scope.row as Flow)?.startDate" inverted />
+                            </router-link>
+                        </div>
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="colProp === 'state.current' && user?.hasAny(resource.EXECUTION)"
+                    prop="state.current"
+                    :label="$t('last execution status')"
+                >
+                    <template #default="scope">
+                        <div
+                            @click.prevent.stop
+                            v-if="lastExecutionByFlowReady && getLastExecution(scope.row as Flow)"
+                            class="execution-status-row"
+                        >
+                            <router-link
+                                :to="{
+                                    name: 'executions/update',
+                                    params: {
+                                        namespace: scope.row.namespace,
+                                        flowId: scope.row.id,
+                                        id: getLastExecution(scope.row as Flow)!.id
+                                    }
+                                }"
+                            >
+                                <KsExecutionStatus :status="getLastExecution(scope.row as Flow)!.status" size="small" :dot="isMobile" />
+                            </router-link>
+                        </div>
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="colProp === 'state' && user?.hasAny(resource.EXECUTION)"
+                    prop="state"
+                    :label="$t('execution statistics')"
+                    className="row-graph"
+                >
+                    <template #default="scope">
+                        <div :ref="(el) => observeChartBlock(el, chartKey(scope.row as Flow))" class="row-graph-cell">
+                            <TimeSeries
+                                v-if="activatedCharts.has(chartKey(scope.row as Flow))"
+                                :chart="mappedChart(scope.row.id, scope.row.namespace)"
+                                :filters="chartFilters()"
+                                showDefault
+                                short
+                                :flow="scope.row.id"
+                                :namespace="scope.row.namespace"
+                            />
+                        </div>
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="colProp === 'triggers'"
+                    :label="$t('triggers')"
+                    className="row-action"
+                >
+                    <template #default="scope">
+                        <TriggerAvatar :flow="(scope.row as Flow)" />
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="colProp === 'updated'"
+                    prop="updated"
+                    sortable="custom"
+                    :sortOrders="['ascending', 'descending']"
+                    :label="$t('last modified')"
+                >
+                    <template #default="scope">
+                        <KsDateAgo v-if="scope.row.updated" :date="scope.row.updated" inverted />
+                    </template>
+                </KsTableColumn>
+
+                <KsTableColumn
+                    v-else-if="extensionColumn(colProp)"
+                    :label="extensionColumn(colProp)!.label"
+                >
+                    <template #header>
+                        <component :is="extensionColumn(colProp)!.header" v-if="extensionColumn(colProp)!.header" />
+                        <template v-else>{{ extensionColumn(colProp)!.label }}</template>
+                    </template>
+                    <template #default="scope">
+                        <component :is="extensionColumn(colProp)!.cell" :row="scope.row" />
+                    </template>
+                </KsTableColumn>
+
+            </template>
+
+            <KsTableColumn columnKey="action" className="row-action" :label="$t('actions')" fixed="right">
+                <template #default="scope">
+                    <div class="flow-actions-cell">
+                        <KsIconButton
+                            v-if="canExecute(scope.row as Flow)"
+                            :tooltip="$t('execute')"
+                            @click="openExecuteModal(scope.row as Flow)"
+                        >
+                            <Play />
+                        </KsIconButton>
+                    </div>
+                </template>
+            </KsTableColumn>
+        </KsDataTable>
+
+        <KsDialog
+            v-model="showRunModal"
+            destroyOnClose
+            appendToBody
+            scrollable
+            large
+        >
+            <template #header>
+                <i18n-t v-if="selectedFlow?.id" keypath="execute the flow" tag="span">
+                    <template #id><code>{{ selectedFlow.id }}</code></template>
+                </i18n-t>
+            </template>
+            <FlowRun
+                v-if="executionsStore.flow"
+                ref="flowRunRef"
+                :embed="true"
+                :redirect="false"
+                @execution-trigger="handleExecutionStart"
+            />
+            <template #footer>
+                <FlowRunActions :flowRun="flowRunRef" />
+            </template>
+        </KsDialog>
+    </section>
+</template>
+
+<script setup lang="ts">
+    import {ref, computed, useTemplateRef, watch} from "vue"
+    import {useIsMobile} from "../../composables/useIsMobile"
+    import {isPlainRowActivation} from "../../utils/rowNavigation"
+    import {useRoute, useRouter, type LocationQuery} from "vue-router"
+    import {useI18n} from "vue-i18n"
+    import BreakableText from "../BreakableText"
+    import {filterHiddenLabels} from "../../utils/labels"
+    import * as YAML_UTILS from "@kestra-io/topology/flow-yaml-utils"
+    import {useFlowFilter} from "../filter/configurations/flowFilter"
+    import useRestoreUrl from "../../composables/useRestoreUrl"
+
+    const {loadInit} = useRestoreUrl()
+
+    import Plus from "vue-material-design-icons/Plus.vue"
+    import Upload from "vue-material-design-icons/Upload.vue"
+    import Download from "vue-material-design-icons/Download.vue"
+    import TrashCan from "vue-material-design-icons/TrashCan.vue"
+    import TextBoxSearch from "vue-material-design-icons/TextBoxSearch.vue"
+    import CircleOpacity from "vue-material-design-icons/CircleOpacity.vue"
+
+    import NavBarActions from "../layout/NavBarActions.vue"
+    import NavBarAction from "../layout/NavBarAction.vue"
+    import FileDocumentCheckOutline from "vue-material-design-icons/FileDocumentCheckOutline.vue"
+    import FileDocumentRemoveOutline from "vue-material-design-icons/FileDocumentRemoveOutline.vue"
+    import Play from "vue-material-design-icons/Play.vue"
+
+    import {KsExecutionStatus, KsIconButton, deepMerge} from "@kestra-io/design-system"
+    import Labels from "../layout/Labels.vue"
+    import TriggerAvatar from "./TriggerAvatar.vue"
+
+    import FlowRun from "./FlowRun.vue"
+    import FlowRunActions from "./FlowRunActions.vue"
+    import {KsFilter as KSFilter, type FilterConfiguration} from "@kestra-io/design-system"
+    import MarkdownTooltip from "../layout/MarkdownTooltip.vue"
+    import TimeSeries from "../dashboard/sections/TimeSeries.vue"
+    import {useLazyChartBlocks} from "../dashboard/composables/useLazyChartBlocks"
+    import type {Chart} from "../dashboard/types"
+    import TopNavBar from "../../components/layout/TopNavBar.vue"
+
+    import action from "../../models/action"
+    import resource from "../../models/resource"
+
+    import {useToast} from "../../utils/toast"
+
+    import {useFlowStore} from "../../stores/flow"
+    import {useApiStore} from "../../stores/api"
+    import {useAuthStore} from "override/stores/auth"
+    import {useMiscStore} from "override/stores/misc"
+    import {useExecutionsStore} from "../../stores/executions"
+
+    import {useTableColumns, type ColumnConfig} from "@kestra-io/design-system"
+    import useRouteContext from "../../composables/useRouteContext"
+    import {useFlowsTableExtension} from "override/components/flows/flowsTableExtension"
+    import type {ExecutionControllerLastExecutionResponse, QueryFilter} from "@kestra-io/kestra-sdk"
+    import type {Flow} from "../../stores/flow"
+    import useFlowsBulkActions from "./useFlowsBulkActions"
+
+
+    const props = withDefaults(defineProps<{
+        topbar?: boolean;
+        fitHeight?: boolean;
+        namespace?: string;
+        id?: string | null;
+        defaultScopeFilter?: boolean,
+        embed?: boolean;
+        filterConfiguration?: FilterConfiguration;
+    }>(), {
+        topbar: true,
+        fitHeight: undefined,
+        namespace: undefined,
+        id: undefined,
+        defaultScopeFilter: false,
+        embed: false,
+        filterConfiguration: undefined,
+    })
+
+    const fitHeightResolved = computed(() => props.fitHeight ?? props.topbar)
+
+    const flowStore = useFlowStore()
+    const apiStore = useApiStore()
+    const authStore = useAuthStore()
+    const executionsStore = useExecutionsStore()
+    const miscStore = useMiscStore()
+
+    const route = useRoute()
+    const router = useRouter()
+
+    const {t} = useI18n()
+    const toast = useToast()
+
+    const flowFilter = useFlowFilter()
+
+    const isMobile = useIsMobile()
+
+    const lastExecutionByFlowReady = ref(false)
+    const latestExecutions = ref<ExecutionControllerLastExecutionResponse[]>([])
+    const file = ref<HTMLInputElement | null>(null)
+
+    const optionalColumns = ref<ColumnConfig[]>([
+        {
+            label: t("labels"),
+            prop: "labels",
+            default: true,
+            description: t("filter.table_column.flows.labels"),
+        },
+        {
+            label: t("namespace"),
+            prop: "namespace",
+            default: true,
+            description: t("filter.table_column.flows.namespace"),
+        },
+        {
+            label: t("last execution date"),
+            prop: "state.startDate",
+            default: true,
+            description: t("filter.table_column.flows.last execution date"),
+        },
+        {
+            label: t("last execution status"),
+            prop: "state.current",
+            default: true,
+            description: t("filter.table_column.flows.last execution status"),
+        },
+        {
+            label: t("execution statistics"),
+            prop: "state",
+            default: true,
+            description: t("filter.table_column.flows.execution statistics"),
+        },
+        {
+            label: t("triggers"),
+            prop: "triggers",
+            default: true,
+            description: t("filter.table_column.flows.triggers"),
+        },
+        {
+            label: t("last modified"),
+            prop: "updated",
+            default: false,
+            description: t("filter.table_column.flows.last modified"),
+        },
+    ])
+
+    const flowsExtension = useFlowsTableExtension()
+    optionalColumns.value.push(...flowsExtension.columns)
+
+    const extensionColumn = (prop: string) => flowsExtension.columns.find(column => column.prop === prop)
+    const extensionColumnsVisible = computed(() =>
+        flowsExtension.columns.some(column => displayColumns.value.includes(column.prop)),
+    )
+    const loadExtensionData = (rows: {id: string; namespace: string}[]) => {
+        if (extensionColumnsVisible.value) {
+            flowsExtension.load?.(rows.map(row => ({id: row.id, namespace: row.namespace})))
+        }
+    }
+
+    const {
+        visibleColumns: displayColumns,
+        updateVisibleColumns,
+    } = useTableColumns({
+        columns: optionalColumns.value,
+        storageKey: "flows",
+        initialVisibleColumns: [],
+    })
+
+    const mobileColumns = computed(() => {
+        const shown = (prop: string) => displayColumns.value.includes(prop) ? prop : undefined
+        return {
+            leading: shown("state.current"),
+            title: "id",
+            meta: ["namespace"].filter(shown),
+            metaAside: shown("state.startDate"),
+            actions: "action",
+        }
+    })
+
+    watch(extensionColumnsVisible, visible => {
+        if (visible && flowStore.flows?.length) {
+            loadExtensionData(flowStore.flows)
+        }
+    })
+
+    const user = computed(() => authStore.user)
+    const canCheck = computed(() => canRead.value || canDelete.value || canUpdate.value)
+    const canCreate = computed(() => user?.value?.hasAnyActionOnAnyNamespace(resource.FLOW, action.CREATE))
+    const routeNamespace = computed(() => route.query.namespace as string | undefined)
+    const canRead = computed(() => user?.value?.isAllowed(resource.FLOW, action.VIEW, routeNamespace.value))
+    const canDelete = computed(() => user?.value?.isAllowed(resource.FLOW, action.DELETE, routeNamespace.value))
+    const canUpdate = computed(() => user?.value?.isAllowed(resource.FLOW, action.UPDATE, routeNamespace.value))
+    const canExecute = (flow: Flow) => flow && !flow.deleted && user?.value?.isAllowed(resource.FLOW, action.EXECUTE, flow.namespace)
+
+    const routeInfo = computed(() => ({title: t("flows")}))
+
+    useRouteContext(routeInfo, props.embed)
+
+    const dataTable = useTemplateRef("dataTable")
+
+    const ready = ref(false)
+
+    async function loadData({page, size, sort}: {page: number; size: number; sort?: string}) {
+        if (!loadInit.value) return
+        await flowStore
+            .findFlows(
+                deepMerge({
+                    size,
+                    page,
+                    sort: sort ?? String(route.query.sort ?? "id:asc"),
+                }, loadQuery()),
+            )
+            .then((data) => {
+                if (user.value?.hasAnyActionOnAnyNamespace(resource.EXECUTION, action.LIST)) {
+                    executionsStore.loadLatestExecutions({
+                        flowFilters: data.results.map((flow) => ({id: flow.id, namespace: flow.namespace})),
+                    }).then((latestExecs) => {
+                        latestExecutions.value = latestExecs
+                        lastExecutionByFlowReady.value = true
+                    })
+                }
+                loadExtensionData(data.results)
+            })
+    }
+
+    const onRowClick = (item: Flow, column: {type?: string} | undefined, event: Event) => {
+        if (!isPlainRowActivation(column, event)) return
+
+        router.push({
+            name: route.name?.toString().replace("/list", "/update"),
+            params: {namespace: item.namespace, id: item.id, tenant: route.params.tenant},
+        })
+    }
+
+    const filterQueryKey = computed(() => {
+        const {page: _p, size: _s, sort: _so, ...filters} = route.query
+        return JSON.stringify(filters)
+    })
+
+    const urlPage = computed(() => Number(route.query.page) || 1)
+    const urlSize = computed(() => Number(route.query.size) || 25)
+
+    watch(filterQueryKey, () => {
+        dataTable.value?.resetAndReload()
+    })
+
+    function selectionMapper({id, namespace, disabled}: {id: string; namespace: string; disabled: boolean}) {
+        return {
+            id,
+            namespace,
+            enabled: !disabled,
+        }
+    }
+
+
+    // Chart definition for mappedChart
+    const CHART_DEFINITION: Chart = {
+        id: "total_executions_timeseries",
+        type: "io.kestra.plugin.core.dashboard.chart.TimeSeries",
+        chartOptions: {
+            displayName: "Total Executions",
+            description: "Executions duration and count per date",
+            legend: {enabled: false},
+            column: "date",
+            colorByColumn: "state",
+            width: 12,
+        },
+        data: {
+            type: "io.kestra.plugin.core.dashboard.data.Executions",
+            columns: {
+                date: {
+                    field: "START_DATE",
+                    displayName: "Date",
+                },
+                state: {
+                    field: "STATE",
+                },
+                total: {
+                    displayName: "Executions",
+                    agg: "COUNT",
+                    graphStyle: "BARS",
+                },
+                duration: {
+                    field: "DURATION",
+                    displayName: "Duration",
+                    agg: "SUM",
+                    graphStyle: "LINES",
+                },
+            },
+            where: [
+                {
+                    field: "NAMESPACE",
+                    type: "EQUAL_TO",
+                    value: "${namespace}",
+                },
+                {
+                    field: "FLOW_ID",
+                    type: "EQUAL_TO",
+                    value: "${flow_id}",
+                },
+            ],
+        },
+    }
+    CHART_DEFINITION.content = YAML_UTILS.stringify(CHART_DEFINITION)
+
+    function updateDisplayColumns(newColumns: string[]) {
+        updateVisibleColumns(newColumns)
+    }
+
+    const showRunModal = ref(false)
+    const flowRunRef = ref<InstanceType<typeof FlowRun> | null>(null)
+    const selectedFlow = ref<Flow | null>(null)
+
+    async function openExecuteModal(flow: Flow) {
+        apiStore.posthogEvents({
+            type: "FLOW_EXECUTION",
+            action: "open_modal",
+        })
+        selectedFlow.value = flow
+
+        await executionsStore.loadFlowForExecution({
+            namespace: flow.namespace,
+            flowId: flow.id,
+            store: true,
+        })
+
+        showRunModal.value = true
+    }
+
+    function handleExecutionStart() {
+        showRunModal.value = false
+        toast.success(t("execution_started"))
+    }
+
+    function getLastExecution(row: Flow) {
+        if (!latestExecutions.value || !row) return null
+        return latestExecutions.value.find(
+            (e) => e.flowId === row.id && e.namespace === row.namespace,
+        ) ?? null
+    }
+
+    function loadQuery(): LocationQuery {
+        const {page: _p, size: _s, sort: _so, ...queryFilter}: LocationQuery = route.query
+        if (props.namespace) {
+            queryFilter["filters[namespace][PREFIX]"] = route.params.id || props.namespace
+        }
+        return queryFilter
+    }
+
+    function refresh() {
+        dataTable.value?.reload()
+    }
+
+    function rowClasses(row: {row: Flow}) {
+        if (!row || !row.row) return ""
+        const classes = []
+        if (row.row.disabled) classes.push("disabled")
+        if (row.row.draft) classes.push("draft")
+        return classes.join(" ")
+    }
+
+    // One chart per row means one preview request per row on arrival. Rows only load once their cell
+    // nears the viewport, and are never recycled: remounting would re-issue the request we are saving.
+    const {activatedCharts, observeChartBlock} = useLazyChartBlocks(() => false)
+
+    const chartKey = (row: {id: string; namespace: string}) => `${row.namespace}/${row.id}`
+
+    function mappedChart(id: string, namespace: string) {
+        let MAPPED_CHARTS = JSON.parse(JSON.stringify(CHART_DEFINITION))
+        MAPPED_CHARTS.content = MAPPED_CHARTS.content.replace("${namespace}", namespace).replace("${flow_id}", id)
+        MAPPED_CHARTS.data.where = MAPPED_CHARTS.data.where.map((condition: {field: string; type: string; value: string}) => ({
+            ...condition,
+            value: condition.value.replace("${namespace}", namespace).replace("${flow_id}", id),
+        }))
+        return MAPPED_CHARTS
+    }
+
+    function chartFilters(): QueryFilter[] {
+        const DEFAULT_DURATION = miscStore.configs?.chartDefaultDuration ?? "PT24H"
+        return [{
+            field: "timeRange",
+            value: DEFAULT_DURATION,
+            operation: "EQUALS",
+        }]
+    }
+
+    const {
+        anyFlowDisabled,
+        anyFlowEnabled,
+        deleteFlows,
+        enableFlows,
+        disableFlows,
+        exportFlows,
+        exportFlowsAsStream,
+        importFlows,
+    } = useFlowsBulkActions({
+        loadQuery,
+        dataTable,
+        file,
+    })
+</script>
+
+<style scoped>
+.full-container {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    & > * {
+        flex: 1;
+    }
+}
+
+.shadow {
+    box-shadow: 0px 2px 4px 0px var(--ks-shadow-element) !important;
+}
+
+:deep(nav .dropdown-menu) {
+    display: flex;
+    width: 20rem;
+}
+
+.flow-id {
+    min-width: 200px;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.file-input {
+    display: none;
+}
+
+.flow-link {
+    margin-inline-end: var(--ks-spacing-1);
+}
+
+.draft-tag {
+    margin-inline-end: var(--ks-spacing-1);
+}
+
+.execution-status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.flows-table .kel-table__cell {
+    vertical-align: middle;
+}
+
+:deep(.flows-table) .kel-table__row {
+    cursor: pointer;
+}
+
+:deep(.flows-table) th.row-action .cell {
+    padding-right: var(--ks-spacing-4);
+}
+
+.header-actions-list {
+    display: flex;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    gap: 0.5rem;
+}
+
+.flow-actions-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    padding-right: var(--ks-spacing-4);
+}
+</style>

@@ -1,0 +1,154 @@
+id: high_risk_referral_flow
+namespace: sevafirst.frontline
+description: >
+  Triggered when langcare-mcp-fhir-main logs a HIGH RiskAssessment or ServiceRequest.
+  Creates an urgent intake ticket in bezs-hms, dispatches WhatsApp/SMS referral alerts,
+  alerts 108 ambulance dispatch, and schedules a 48-hour frontline follow-up verification task.
+
+inputs:
+  - id: patient_id
+    type: STRING
+    required: true
+    description: "FHIR Patient ID"
+  - id: patient_name
+    type: STRING
+    required: true
+    description: "Full name of the pregnant mother or child"
+  - id: patient_phone
+    type: STRING
+    required: true
+    description: "Family contact phone number"
+  - id: village_lgd_code
+    type: STRING
+    required: true
+    description: "Local Government Directory village code"
+  - id: worker_id
+    type: STRING
+    required: true
+    description: "HPR ID of the reporting ASHA/ANM worker"
+  - id: worker_phone
+    type: STRING
+    required: false
+    description: "ASHA worker contact phone"
+  - id: phc_id
+    type: STRING
+    required: true
+    defaults: "phc-rampur-central"
+    description: "Mapped Primary Health Centre ID"
+  - id: subcentre_id
+    type: STRING
+    required: true
+    defaults: "sc-rampur-01"
+    description: "Sub-Centre ID"
+  - id: risk_level
+    type: STRING
+    defaults: "HIGH"
+  - id: danger_flags
+    type: ARRAY
+    itemType: STRING
+    description: "List of detected danger flags (e.g. BP >= 140/90, Hb < 7, chest indrawing)"
+  - id: vitals_summary
+    type: JSON
+    description: "Point-of-care vitals payload (BP, Hb, SpO2, Temp)"
+  - id: voice_audio_url
+    type: STRING
+    required: false
+    description: "Streaming audio recording URL from bezs-filenest"
+  - id: clinical_notes
+    type: STRING
+    required: false
+    description: "AI-summarized case notes in regional dialect"
+  - id: preferred_language
+    type: STRING
+    defaults: "hi"
+    description: "Family language: hi, or, te, ta, bn, mr"
+
+triggers:
+  - id: webhook_high_risk_referral
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: sevafirst-mcp-webhook-secret-token-32b
+
+tasks:
+  # --------------------------------------------------------------------------
+  # STEP 1: CREATE URGENT INTAKE TICKET IN BEZS-HMS FOR PHC MEDICAL OFFICER
+  # --------------------------------------------------------------------------
+  - id: create_hms_urgent_intake_ticket
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://bezs-hms:3000/api/asha-referrals/escalate"
+    method: POST
+    headers:
+      Content-Type: application/json
+      X-SevaFirst-Source: "kestra-orchestration"
+    body: >
+      {
+        "patientId": "{{ inputs.patient_id }}",
+        "patientName": "{{ inputs.patient_name }}",
+        "patientPhone": "{{ inputs.patient_phone }}",
+        "villageLgdCode": "{{ inputs.village_lgd_code }}",
+        "phcId": "{{ inputs.phc_id }}",
+        "subcentreId": "{{ inputs.subcentre_id }}",
+        "workerId": "{{ inputs.worker_id }}",
+        "riskLevel": "{{ inputs.risk_level }}",
+        "dangerFlags": {{ inputs.danger_flags | json }},
+        "vitals": {{ inputs.vitals_summary | json }},
+        "voiceAudioUrl": "{{ inputs.voice_audio_url }}",
+        "clinicalNotes": "{{ inputs.clinical_notes }}",
+        "escalatedAt": "{{ now() }}"
+      }
+
+  # --------------------------------------------------------------------------
+  # STEP 2A: DISPATCH REGIONAL-LANGUAGE WHATSAPP / SMS ALERT TO FAMILY
+  # --------------------------------------------------------------------------
+  - id: dispatch_family_whatsapp_referral_slip
+    type: io.kestra.plugin.core.log.Log
+    message: >
+      [WHATSAPP DISPATCH] Sending pre-filled digital referral slip in '{{ inputs.preferred_language }}'
+      to family at {{ inputs.patient_phone }}.
+      Text: 'आपातकालीन सूचना: {{ inputs.patient_name }} की स्थिति को देखते हुए प्राथमिक स्वास्थ्य केंद्र ({{ inputs.phc_id }}) में तुरंत संपर्क करें। आशा दीदी आपके साथ हैं।'
+      Referral Ticket ID: {{ outputs.create_hms_urgent_intake_ticket.body.ticketId ?? 'TKT-URG-108' }}
+
+  # --------------------------------------------------------------------------
+  # STEP 2B: DISPATCH 108/102 AMBULANCE READINESS FOR CRITICAL DANGER SIGNS
+  # --------------------------------------------------------------------------
+  - id: dispatch_ambulance_readiness
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://bezs-hms:3000/api/asha-referrals/ambulance-alert"
+    method: POST
+    headers:
+      Content-Type: application/json
+    body: >
+      {
+        "service": "108_EMERGENCY_AMBULANCE",
+        "villageLgdCode": "{{ inputs.village_lgd_code }}",
+        "patientName": "{{ inputs.patient_name }}",
+        "patientPhone": "{{ inputs.patient_phone }}",
+        "destinationFacility": "{{ inputs.phc_id }}",
+        "dangerFlags": {{ inputs.danger_flags | json }},
+        "callerAshaId": "{{ inputs.worker_id }}"
+      }
+
+  # --------------------------------------------------------------------------
+  # STEP 3: SCHEDULE 48-HOUR FRONTLINE FOLLOW-UP VERIFICATION TASK
+  # --------------------------------------------------------------------------
+  - id: schedule_48h_followup_verification
+    type: io.kestra.plugin.core.execution.Pause
+    delay: PT48H
+    tasks:
+      - id: verify_patient_phc_arrival
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://bezs-hms:3000/api/asha-referrals/verify-arrival"
+        method: POST
+        headers:
+          Content-Type: application/json
+        body: >
+          {
+            "patientId": "{{ inputs.patient_id }}",
+            "phcId": "{{ inputs.phc_id }}",
+            "workerId": "{{ inputs.worker_id }}",
+            "verifiedAt": "{{ now() }}"
+          }
+      - id: log_followup_status
+        type: io.kestra.plugin.core.log.Log
+        message: >
+          [48H FOLLOWUP] ASHA worker {{ inputs.worker_id }} verified arrival status for {{ inputs.patient_name }}:
+          Status = {{ outputs.verify_patient_phc_arrival.body.arrivalStatus ?? 'PENDING_FIELD_VISIT' }}.

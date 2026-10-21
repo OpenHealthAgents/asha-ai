@@ -1,0 +1,74 @@
+import {computed} from "vue"
+import {useStorage} from "@vueuse/core"
+import {APP_FONT_SIZE_KEY, MONO_BASE_PX, type AppFontSizeMode} from "../utils/appFontSize"
+
+import {storageKeys} from "../utils/constants"
+export type LogDensity = "compact" | "normal" | "expanded";
+
+export const DENSITY_PADDING = {
+    compact: "2px",
+    normal: "5px",
+    expanded: "12px",
+} as const
+
+const MIGRATION_FLAG = "_fontMigratedV2"
+const LEGACY_LOGS_DEFAULT = 14
+const LEGACY_EDITOR_DEFAULT = 12
+
+function runMigrationOnce() {
+    if (localStorage.getItem(MIGRATION_FLAG)) return
+
+    const rawLogs = localStorage.getItem(storageKeys.LOGS_FONT_SIZE)
+    if (rawLogs !== null) {
+        const n = Number(rawLogs)
+        if (n === LEGACY_LOGS_DEFAULT) localStorage.removeItem(storageKeys.LOGS_FONT_SIZE)
+    }
+
+    const rawEditor = localStorage.getItem(storageKeys.EDITOR_FONT_SIZE)
+    if (rawEditor !== null) {
+        const n = Number(rawEditor)
+        if (n === LEGACY_EDITOR_DEFAULT) localStorage.removeItem(storageKeys.EDITOR_FONT_SIZE)
+    }
+
+    localStorage.setItem(MIGRATION_FLAG, "1")
+}
+
+runMigrationOnce()
+
+export const appFontSizeMode = useStorage<AppFontSizeMode>(APP_FONT_SIZE_KEY, "medium")
+
+export const logsFontSizeOverride = useStorage<number | null>(storageKeys.LOGS_FONT_SIZE, null, localStorage, {
+    serializer: {
+        read: (v) => {
+            if (v === null || v === "null" || v === "") return null
+            const n = Number(v)
+            return isNaN(n) ? null : n
+        },
+        write: (v) => (v === null ? "null" : String(v)),
+    },
+})
+
+export const editorFontSizeOverride = useStorage<number | null>(storageKeys.EDITOR_FONT_SIZE, null, localStorage, {
+    serializer: {
+        read: (v) => {
+            if (v === null || v === "null" || v === "") return null
+            const n = Number(v)
+            return isNaN(n) ? null : n
+        },
+        write: (v) => (v === null ? "null" : String(v)),
+    },
+})
+
+export const logsFontSize = computed({
+    get: () => logsFontSizeOverride.value ?? MONO_BASE_PX[appFontSizeMode.value],
+    set: (v: number) => { logsFontSizeOverride.value = v },
+})
+
+export const effectiveEditorFontSize = computed(
+    () => editorFontSizeOverride.value ?? MONO_BASE_PX[appFontSizeMode.value],
+)
+
+export const logsDensity = useStorage<LogDensity>(storageKeys.LOGS_DENSITY, "normal")
+export const logsBodyClamp = useStorage<number>(storageKeys.LOGS_BODY_CLAMP, 0)
+export const logsPrettyJson = useStorage<boolean>(storageKeys.LOGS_PRETTY_JSON, true)
+export const logsExpandByDefault = useStorage<boolean>(storageKeys.LOGS_EXPAND_BY_DEFAULT, false)

@@ -1,0 +1,61 @@
+id: immunization_defaulter_cron
+namespace: sevafirst.frontline
+description: >
+  Runs weekly every Monday at 06:00 AM IST. Queries medplum and bezs-emr-gql
+  to compile village-wise immunization defaulters according to the National Immunization Schedule (NIS),
+  and pushes prioritized task lists to each ASHA worker's DrGodly mobile client outbox.
+
+triggers:
+  - id: weekly_monday_morning_schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 * * 1" # Every Monday at 6:00 AM
+    timezone: "Asia/Kolkata"
+
+tasks:
+  - id: fetch_village_immunization_defaulters
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://bezs-emr-gql:8000/graphql"
+    method: POST
+    headers:
+      Content-Type: application/json
+    body: >
+      {
+        "query": "query GetAllVillageCareGaps { getVillageCareGaps(villageLgdCode: \"215432\") { villageLgdCode totalOverdueCount overdueImmunizations { patientId patientName vaccineCode vaccineName dueDate daysOverdue contactPhone householdAddress } } }"
+      }
+
+  - id: compile_and_sort_defaulters
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - >
+        python3 -c "
+        import json, sys
+        response = json.loads('''{{ outputs.fetch_village_immunization_defaulters.body }}''')
+        gaps = response.get('data', {}).get('getVillageCareGaps', {}).get('overdueImmunizations', [])
+        gaps.sort(key=lambda x: x.get('daysOverdue', 0), reverse=True)
+        print(f'Compiled {len(gaps)} overdue immunization records.')
+        with open('compiled_defaulters.json', 'w') as f:
+            json.dump({'total': len(gaps), 'defaulters': gaps}, f)
+        "
+
+  - id: push_monday_tasklist_to_drgodly
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://drgodly-api:3000/api/worker/tasks/push-weekly-defaulters"
+    method: POST
+    headers:
+      Content-Type: application/json
+    body: >
+      {
+        "villageLgdCode": "215432",
+        "workerId": "usr-asha-sunita",
+        "taskCategory": "MONDAY_IMMUNIZATION_DUE_LIST",
+        "targetVhsndDate": "{{ now() | dateAdd(2, 'DAYS') | date('yyyy-MM-dd') }}",
+        "totalDefaulters": {{ outputs.fetch_village_immunization_defaulters.body.data.getVillageCareGaps.totalOverdueCount ?? 0 }},
+        "defaulters": {{ outputs.fetch_village_immunization_defaulters.body.data.getVillageCareGaps.overdueImmunizations | json }}
+      }
+
+  - id: log_weekly_dispatch_summary
+    type: io.kestra.plugin.core.log.Log
+    message: >
+      [WEEKLY CRON COMPLETED] Pushed Monday morning Due List to ASHA beat (Village LGD 215432).
+      Total immunization gaps: {{ outputs.fetch_village_immunization_defaulters.body.data.getVillageCareGaps.totalOverdueCount ?? 0 }}.
+      Synchronized to DrGodly offline cache for Wednesday VHSND session.

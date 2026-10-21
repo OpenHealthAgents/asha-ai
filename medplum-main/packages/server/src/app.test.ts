@@ -1,0 +1,583 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { badRequest, ContentType, getReferenceString, unsupportedMediaType } from '@medplum/core';
+import type { OperationOutcome, Patient } from '@medplum/fhirtypes';
+import express, { json } from 'express';
+import request from 'supertest';
+import type { Mock, MockInstance } from 'vitest';
+import { vi } from 'vitest';
+import { inviteUser } from './admin/invite';
+import { initApp, JSON_TYPE, shutdownApp } from './app';
+import { getConfig, loadTestConfig } from './config/loader';
+import { DatabaseMode, getDatabasePool } from './database';
+import { getProjectSystemRepo } from './fhir/repo';
+import { GLOBAL_SHARD_ID } from './fhir/sharding';
+import { globalLogger } from './logger';
+import { generateAccessToken } from './oauth/keys';
+import { getRateLimitRedis } from './redis';
+import type { TestRedisConfig } from './test.setup';
+import { createTestProject, deleteRedisKeys, getSuperAdminAccessToken, initTestAuth } from './test.setup';
+
+describe('App', () => {
+  let stdOutSpy: MockInstance;
+
+  beforeEach(() => {
+    stdOutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stdOutSpy.mockRestore();
+  });
+
+  test('Get HTTP config', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/');
+    expect(res).toHaveStatus(200);
+    expect(res.headers['cache-control']).toBeDefined();
+    expect(res.headers['content-security-policy']).toBeDefined();
+    expect(res.headers['referrer-policy']).toBeDefined();
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('Use /api/', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/api/');
+    expect(res).toHaveStatus(200);
+    expect(res.headers['cache-control']).toBeDefined();
+    expect(res.headers['content-security-policy']).toBeDefined();
+    expect(res.headers['referrer-policy']).toBeDefined();
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test.each(['/projects/00000000-0000-0000-0000-000000000000/', '/api/projects/00000000-0000-0000-0000-000000000000/'])(
+    'Use project-scoped mount %s',
+    async (path) => {
+      const app = express();
+      const config = await loadTestConfig();
+      await initApp(app, config);
+      const res = await request(app).get(path);
+      expect(res).toHaveStatus(200);
+      expect(await shutdownApp()).toBeUndefined();
+    }
+  );
+
+  test('Enforce project scope on authenticated requests', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const { client, login, project } = await createTestProject({ withAccessToken: true, withClient: true });
+    const getAccessToken = (issuer: string): Promise<string> =>
+      generateAccessToken(
+        {
+          login_id: login.id,
+          sub: client.id,
+          username: client.id,
+          client_id: client.id,
+          profile: `${client.resourceType}/${client.id}`,
+          scope: login.scope as string,
+        },
+        { issuer }
+      );
+
+    const accessToken = await getAccessToken(`${config.issuer}projects/${project.id}/`);
+
+    const matching = await request(app)
+      .get(`/projects/${project.id}/fhir/R4/Patient`)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(matching).toHaveStatus(200);
+
+    const otherProjectId = '00000000-0000-0000-0000-000000000000';
+    const mismatchedAccessToken = await getAccessToken(`${config.issuer}projects/${otherProjectId}/`);
+    const mismatched = await request(app)
+      .get(`/projects/${otherProjectId}/fhir/R4/Patient`)
+      .set('Authorization', 'Bearer ' + mismatchedAccessToken);
+    expect(mismatched).toHaveStatus(403);
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test.each<[string, boolean]>([
+    [ContentType.JSON, true],
+    [ContentType.FHIR_JSON, true],
+    [ContentType.JSON_PATCH, true],
+    [ContentType.SCIM_JSON, true],
+    ['application/cloudevents-batch+json', true],
+    ['application/gibberish+json', true],
+    ['application/text', false], // not JSON
+    ['text/json', false], // legacy mime type
+    ['text/x-json', false], // legacy mime type
+    ['json/application', false], // invalid
+  ])('JSON body parser with %s', async (contentType, shouldParse) => {
+    const app = express();
+    app.use(json({ type: JSON_TYPE }));
+    app.post('/post-me', (req, res) => {
+      if (req.body?.toEcho) {
+        res.json({ ok: true, echo: req.body?.toEcho });
+      } else {
+        res.json({ ok: false });
+      }
+    });
+
+    const res = await request(app)
+      .post('/post-me')
+      .set('Content-Type', contentType)
+      .send(JSON.stringify({ toEcho: 'hai' }));
+    if (shouldParse) {
+      expect(res.body).toStrictEqual({ ok: true, echo: 'hai' });
+    } else {
+      expect(res.body).toStrictEqual({ ok: false });
+    }
+  });
+
+  test('Get HTTPS config', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    getConfig().baseUrl = 'https://example.com/';
+    await initApp(app, config);
+    const res = await request(app).get('/');
+    expect(res).toHaveStatus(200);
+    expect(res.headers['cache-control']).toBeDefined();
+    expect(res.headers['content-security-policy']).toBeDefined();
+    expect(res.headers['strict-transport-security']).toBeDefined();
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('robots.txt', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/robots.txt');
+    expect(res).toHaveStatus(200);
+    expect(res.text).toBe('User-agent: *\nDisallow: /');
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('No CORS', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/').set('Origin', 'https://blackhat.xyz');
+    expect(res).toHaveStatus(200);
+    expect(res.headers['origin']).toBeUndefined();
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  describe('request correlation', () => {
+    let app: express.Express;
+
+    beforeEach(async () => {
+      app = express();
+      const config = await loadTestConfig();
+      await initApp(app, config);
+    });
+
+    afterEach(async () => {
+      await shutdownApp();
+    });
+
+    test('Echoes a server-minted X-Request-Id', async () => {
+      const res = await request(app).get('/');
+      expect(res).toHaveStatus(200);
+      expect(res.headers['x-request-id']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(res.headers['x-trace-id']).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    test('Mints a distinct request ID per request', async () => {
+      const res1 = await request(app).get('/');
+      const res2 = await request(app).get('/');
+      expect(res1.headers['x-request-id']).not.toBe(res2.headers['x-request-id']);
+    });
+
+    test('Does not adopt a caller-supplied X-Request-Id', async () => {
+      const res = await request(app).get('/').set('X-Request-Id', 'caller-supplied-id');
+      expect(res).toHaveStatus(200);
+      expect(res.headers['x-request-id']).not.toBe('caller-supplied-id');
+    });
+
+    test('Echoes the trace ID from traceparent', async () => {
+      const traceId = '4bf92f3577b34da6a3ce929d0e0e4736';
+      const res = await request(app).get('/').set('traceparent', `00-${traceId}-3456789012345678-01`);
+      expect(res).toHaveStatus(200);
+      expect(res.headers['x-trace-id']).toBe(traceId);
+    });
+
+    test('Normalizes a UUID x-trace-id', async () => {
+      const res = await request(app).get('/').set('X-Trace-Id', '4bf92f35-77b3-4da6-a3ce-929d0e0e4736');
+      expect(res).toHaveStatus(200);
+      expect(res.headers['x-trace-id']).toBe('4bf92f3577b34da6a3ce929d0e0e4736');
+    });
+
+    test('Ignores an unsafe x-trace-id', async () => {
+      const res = await request(app).get('/').set('X-Trace-Id', 'a'.repeat(65));
+      expect(res).toHaveStatus(200);
+      expect(res.headers['x-trace-id']).toMatch(/^[0-9a-f]{32}$/);
+    });
+  });
+
+  describe('loggingMiddleware', () => {
+    let app: express.Express;
+
+    beforeEach(async () => {
+      app = express();
+      const config = await loadTestConfig();
+      config.logLevel = 'info';
+      config.logRequests = true;
+      await initApp(app, config);
+    });
+
+    afterEach(async () => {
+      await shutdownApp();
+    });
+
+    test('X-Forwarded-For spoofing', async () => {
+      const res = await request(app).get('/').set('X-Forwarded-For', '1.1.1.1, 2.2.2.2');
+      expect(res).toHaveStatus(200);
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj.ip).toBe('2.2.2.2');
+    });
+
+    test('Authenticated request with logRequests enabled', async () => {
+      const accessToken = await initTestAuth();
+
+      const patient: Patient = {
+        resourceType: 'Patient',
+        name: [{ family: 'Simpson', given: ['Lisa'] }],
+      };
+      const res1 = await request(app)
+        .post(`/fhir/R4/Patient`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send(patient);
+      expect(res1).toHaveStatus(201);
+      expect(res1.body).toMatchObject(patient);
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj).toMatchObject({ method: 'POST', path: '/fhir/R4/Patient', status: 201, fhirQuota: 100 });
+    });
+
+    test('Authenticated request with On-Behalf-Of', async () => {
+      const { accessToken, project, client } = await createTestProject({
+        withAccessToken: true,
+        withClient: true,
+        membership: { admin: true },
+      });
+
+      const { profile } = await inviteUser({
+        project,
+        resourceType: 'Practitioner',
+        firstName: 'Test',
+        lastName: 'Person',
+      });
+
+      (process.stdout.write as Mock).mockClear();
+
+      const patient: Patient = {
+        resourceType: 'Patient',
+        name: [{ family: 'Simpson', given: ['Lisa'] }],
+      };
+      const res1 = await request(app)
+        .post(`/fhir/R4/Patient`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('X-Medplum-On-Behalf-Of', getReferenceString(profile))
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send(patient);
+      expect(res1).toHaveStatus(201);
+      expect(res1.body).toMatchObject(patient);
+      expect(process.stdout.write).toHaveBeenCalledTimes(1);
+
+      const logLine = (process.stdout.write as Mock).mock.calls[0][0];
+      const logObj = JSON.parse(logLine);
+      expect(logObj).toMatchObject({ profile: `${getReferenceString(client)} (as ${getReferenceString(profile)})` });
+    });
+
+    test('Logs on middleware error', async () => {
+      const accessToken = await initTestAuth();
+      const res1 = await request(app)
+        .post(`/fhir/R4/Patient`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send(`>kjaysgdfsk;sdfgjsdrg<`); // Send malformed data that will fail in the body parser middleware
+      expect(res1).toHaveStatus(400);
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj).toMatchObject({ method: 'POST', path: '/fhir/R4/Patient', status: 400 });
+    });
+
+    test('Logs authentication error', async () => {
+      const { accessToken, membership, project } = await createTestProject({ withAccessToken: true, withClient: true });
+
+      // Delete ProjectMembership to cause a 410 Gone error in the authentication middleware
+      await (await getProjectSystemRepo(project)).deleteResource(membership.resourceType, membership.id);
+
+      const res1 = await request(app)
+        .get(`/fhir/R4/Patient`)
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send();
+      expect(res1).toHaveStatus(400);
+      const outcome = res1.body as OperationOutcome;
+      const issue = outcome.issue[0];
+
+      // Error should be wrapped for presentation to user
+      expect(issue.details?.text).toStrictEqual('Authentication error');
+      expect(issue.diagnostics).toStrictEqual('OperationOutcomeError: Gone');
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      // Request should be logged
+      expect(logObj).toMatchObject({ method: 'GET', path: '/fhir/R4/Patient', status: 400 });
+    });
+
+    test('Route parsing error', async () => {
+      const accessToken = await initTestAuth();
+      const res1 = await request(app)
+        .get('/fhir/R4/Organization/%account')
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('Content-Type', ContentType.FHIR_JSON)
+        .send();
+      expect(res1).toHaveStatus(400);
+    });
+
+    test('X-Medplum-Log-Tag on unauthenticated request', async () => {
+      const res = await request(app).get('/').set('X-Medplum-Log-Tag', 'my-end-user-1234');
+      expect(res).toHaveStatus(200);
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj.logTag).toBe('my-end-user-1234');
+    });
+
+    test('X-Medplum-Log-Tag on authenticated request', async () => {
+      const accessToken = await initTestAuth();
+      (process.stdout.write as Mock).mockClear();
+
+      const res = await request(app)
+        .get('/fhir/R4/Patient')
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('X-Medplum-Log-Tag', 'my-end-user-1234');
+      expect(res).toHaveStatus(200);
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj.logTag).toBe('my-end-user-1234');
+    });
+
+    test('X-Medplum-Log-Tag rejects an unusable value', async () => {
+      const res = await request(app).get('/').set('X-Medplum-Log-Tag', 'a'.repeat(129));
+      expect(res).toHaveStatus(400);
+      expect((res.body as OperationOutcome).issue[0].details?.text).toStrictEqual(
+        'Invalid X-Medplum-Log-Tag header: expected 1 to 128 characters of printable ASCII'
+      );
+
+      // The request is still logged, so an operator can see the rejection
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj).toMatchObject({ status: 400 });
+      expect(logObj.logTag).toBeUndefined();
+    });
+
+    test('X-Medplum-Log-Tag is rejected before authentication', async () => {
+      // The header is a request shape error, so it does not depend on a valid token
+      const res = await request(app)
+        .get('/fhir/R4/Patient')
+        .set('Authorization', 'Bearer invalid')
+        .set('X-Medplum-Log-Tag', 'a'.repeat(129));
+      expect(res).toHaveStatus(400);
+      expect((res.body as OperationOutcome).issue[0].details?.text).toStrictEqual(
+        'Invalid X-Medplum-Log-Tag header: expected 1 to 128 characters of printable ASCII'
+      );
+    });
+
+    test('X-Medplum-Log-Tag does not reach AuditEvent log lines', async () => {
+      // AuditEvents are serialized FHIR resources written straight to stdout, not log lines built
+      // from the request logger's metadata, so they carry no logTag. Correlate them with the
+      // requestId and traceId in the tracing extension instead.
+      getConfig().logAuditEvents = true;
+      const accessToken = await initTestAuth();
+      (process.stdout.write as Mock).mockClear();
+
+      const res = await request(app)
+        .get('/fhir/R4/Patient')
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('X-Medplum-Log-Tag', 'my-end-user-1234');
+      expect(res).toHaveStatus(200);
+
+      const auditLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('"resourceType":"AuditEvent"'));
+      expect(auditLines.length).toBeGreaterThan(0);
+      for (const line of auditLines) {
+        expect(JSON.parse(line[0]).logTag).toBeUndefined();
+      }
+    });
+
+    test('X-Medplum-Log-Tag on authentication error', async () => {
+      const { accessToken, membership, project } = await createTestProject({ withAccessToken: true, withClient: true });
+
+      // Delete ProjectMembership to cause a 410 Gone error in the authentication middleware
+      await (await getProjectSystemRepo(project)).deleteResource(membership.resourceType, membership.id);
+      (process.stdout.write as Mock).mockClear();
+
+      const res = await request(app)
+        .get('/fhir/R4/Patient')
+        .set('Authorization', 'Bearer ' + accessToken)
+        .set('X-Medplum-Log-Tag', 'my-end-user-1234');
+      expect(res).toHaveStatus(400);
+
+      const logLines = stdOutSpy.mock.calls.filter((call) => call[0].includes('Request served'));
+      expect(logLines).toHaveLength(1);
+      const logObj = JSON.parse(logLines[0][0]);
+      expect(logObj.logTag).toBe('my-end-user-1234');
+    });
+  });
+
+  test('Internal Server Error', async () => {
+    const app = express();
+    app.get('/throw', () => {
+      throw new Error('Catastrophe!');
+    });
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/throw');
+    expect(res).toHaveStatus(500);
+    expect(res.body).toMatchObject({ msg: 'Internal Server Error' });
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('Stream is not readable', async () => {
+    const app = express();
+    app.get('/throw', () => {
+      const err = new Error('stream.not.readable');
+      (err as any).type = 'stream.not.readable';
+      throw err;
+    });
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/throw');
+    expect(res).toHaveStatus(400);
+    expect(res.body).toMatchObject(badRequest('Stream not readable'));
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('Database disconnect', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+
+    const loggerError = vi.spyOn(globalLogger, 'error').mockReturnValueOnce();
+    const error = new Error('Mock database disconnect');
+    getDatabasePool(DatabaseMode.WRITER, GLOBAL_SHARD_ID).emit('error', error);
+    expect(loggerError).toHaveBeenCalledWith('Database connection error', error);
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test.skip('Database timeout', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const accessToken = await getSuperAdminAccessToken();
+
+    config.database.queryTimeout = 1;
+    await initApp(app, config);
+    const res = await request(app)
+      .get(`/fhir/R4/SearchParameter?base=Observation`)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res).toHaveStatus(400);
+
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('Preflight max age', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app)
+      .options('/fhir/R4/Patient')
+      .set('Origin', 'http://localhost:3000')
+      .set('Access-Control-Request-Method', 'GET');
+    expect(res).toHaveStatus(204);
+    expect(res.header['access-control-max-age']).toBe('600');
+    expect(res.header['cache-control']).toBe('no-store, no-cache, must-revalidate');
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('Server rate limit', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    config.defaultRateLimit = 1;
+
+    const rateLimitRedisConfig = config.rateLimitRedis as TestRedisConfig;
+    expect(rateLimitRedisConfig).toBeDefined();
+    rateLimitRedisConfig.keyPrefix = 'server-rate-limit:';
+    await initApp(app, config);
+
+    const res = await request(app).get('/api/');
+    expect(res).toHaveStatus(200);
+    const res2 = await request(app).get('/api/');
+    expect(res2).toHaveStatus(429);
+    expect(res2.body.extension).toContainEqual({
+      url: 'https://medplum.com/fhir/StructureDefinition/rate-limit-reset',
+      valueUnsignedInt: 60,
+    });
+    await deleteRedisKeys(getRateLimitRedis(), rateLimitRedisConfig.keyPrefix);
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('MFA rate limit', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    config.defaultRateLimit = 100;
+    config.defaultMfaRateLimit = 1;
+
+    const rateLimitRedisConfig = config.rateLimitRedis as TestRedisConfig;
+    rateLimitRedisConfig.keyPrefix = 'mfa-rate-limit:';
+    await initApp(app, config);
+
+    expect(await request(app).post('/auth/mfa/verify').send({})).toHaveStatus(400);
+    expect(await request(app).post('/auth/mfa/verify').send({})).toHaveStatus(429);
+
+    await deleteRedisKeys(getRateLimitRedis(), rateLimitRedisConfig.keyPrefix);
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('Server rate limit disabled', async () => {
+    const app = express();
+    const config = await loadTestConfig();
+    config.rateLimitsEnabled = false;
+    config.defaultRateLimit = 1;
+    await initApp(app, config);
+
+    const res = await request(app).get('/api/');
+    expect(res).toHaveStatus(200);
+    const res2 = await request(app).get('/api/');
+    expect(res2).toHaveStatus(200);
+    expect(await shutdownApp()).toBeUndefined();
+  });
+
+  test('UnsupportedMediaTypeError', async () => {
+    const app = express();
+    app.get('/throw', () => {
+      const err = new Error('UnsupportedMediaTypeError');
+      err.name = 'UnsupportedMediaTypeError';
+      throw err;
+    });
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    const res = await request(app).get('/throw');
+    expect(res).toHaveStatus(415);
+    expect(res.body).toMatchObject(unsupportedMediaType);
+    expect(await shutdownApp()).toBeUndefined();
+  });
+});

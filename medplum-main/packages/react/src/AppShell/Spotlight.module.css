@@ -1,0 +1,90 @@
+/*
+ * Spotlight component style overrides.
+ * Uses Mantine's classNames API for maintainability across Mantine upgrades.
+ * See: https://mantine.dev/styles/styles-api/
+ */
+
+/* Action section (avatar/icon) margins */
+.actionSection[data-position='left'] {
+  margin-inline-end: var(--mantine-spacing-xs);
+}
+
+.actionSection[data-position='right'] {
+  margin-inline-start: var(--mantine-spacing-xs);
+}
+
+/* Action item styling - matches navbar link colors */
+.action:where(:not([data-selected])):hover,
+.action:where(:not([data-selected])):active {
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+}
+
+.action:where([data-selected]) {
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  color: light-dark(var(--mantine-primary-color-light-color), var(--mantine-primary-color-5));
+}
+
+.action:where([data-selected]) .actionDescription {
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-5));
+}
+
+/* Action group styling */
+.actionsGroup {
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: var(--mantine-spacing-md);
+}
+
+/* First group: compensate for container padding */
+.actionsGroup:first-child {
+  margin-top: 0;
+  padding-top: calc(var(--mantine-spacing-md) - 2px);
+}
+
+/* Add divider between action groups */
+.actionsGroup:not(:first-child) {
+  border-top: calc(0.0625rem * var(--mantine-scale)) solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+}
+
+/* Actions list container */
+.actionsList {
+  padding-top: 2px;
+}
+
+/* Modal content wrapper */
+.content {
+  box-shadow: 0 0.5rem 2rem light-dark(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.5));
+}
+
+/* Group label — match Menu.Label (title case, not Mantine's default uppercase). */
+.groupLabel,
+.actionsGroup::before {
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  color: var(--mantine-color-dimmed);
+  text-transform: none;
+}
+
+.actionsGroup::before {
+  padding-inline: var(--mantine-spacing-md);
+  padding-bottom: 2px;
+}
+
+/* Searching / empty hint — same top as first Actions group */
+.emptyState {
+  padding-top: calc(var(--mantine-spacing-md) - 2px);
+  padding-inline: var(--mantine-spacing-md);
+  padding-bottom: var(--mantine-spacing-md);
+}
+
+/* Footer with keyboard shortcut hints — match Actions title inset */
+.footer {
+  border-top: calc(0.0625rem * var(--mantine-scale)) solid
+    light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+  padding: var(--mantine-spacing-md) calc(var(--mantine-spacing-md) + calc(0.25rem * var(--mantine-scale)));
+}
+
+.shortcutHints {
+  width: 100%;
+}

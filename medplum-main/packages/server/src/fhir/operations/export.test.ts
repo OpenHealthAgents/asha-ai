@@ -1,0 +1,547 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { assert, ContentType } from '@medplum/core';
+import type { FhirRequest } from '@medplum/fhir-router';
+import type {
+  AsyncJob,
+  Binary,
+  BulkDataExportOutput,
+  CodeableConcept,
+  Encounter,
+  Observation,
+  Patient,
+} from '@medplum/fhirtypes';
+import type { Job } from 'bullmq';
+import express from 'express';
+import request from 'supertest';
+import { vi } from 'vitest';
+import { initApp, shutdownApp } from '../../app';
+import { loadTestConfig } from '../../config/loader';
+import type { FileSystemStorage } from '../../storage/filesystem';
+import { getBinaryStorage } from '../../storage/loader';
+import {
+  addTestUser,
+  createTestProject,
+  initTestAuth,
+  streamToString,
+  waitForAsyncJob,
+  withTestContext,
+} from '../../test.setup';
+import { execBulkExportJob } from '../../workers/bulk-export';
+import { queueRegistry } from '../../workers/utils';
+import { getTestProjectSystemRepo } from '../repository/test-utils';
+import type { ExportParameters } from './export';
+import { exportResources, exportResourceType, parseExportParameters } from './export';
+import { BulkExporter } from './utils/bulkexporter';
+
+describe('Export', () => {
+  const app = express();
+  const systemRepo = getTestProjectSystemRepo();
+
+  beforeAll(async () => {
+    const config = await loadTestConfig();
+    await initApp(app, config);
+    vi.mocked(queueRegistry.get('BulkExportQueue')?.add)?.mockImplementation(async (name, data) => {
+      const job = { name, data, queueName: 'BulkExportQueue' } as Job;
+      await execBulkExportJob(job);
+      return job;
+    });
+  });
+
+  afterAll(async () => {
+    await shutdownApp();
+  });
+
+  test('Kickoff queues the export without running it', async () => {
+    const { accessToken, repo } = await createTestProject({ withAccessToken: true, withRepo: true });
+    const queue = queueRegistry.get('BulkExportQueue');
+    assert(queue);
+    vi.mocked(queue.add).mockImplementationOnce(async (name, data) => ({ name, data }) as Job);
+    const res = await request(app)
+      .get('/fhir/R4/$export?_type=Patient')
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res).toHaveStatus(202);
+    const id = res.headers['content-location'].split('/').pop() as string;
+    expect((await repo.readResource<AsyncJob>('AsyncJob', id)).status).toBe('active');
+    expect(queue.add).toHaveBeenLastCalledWith(
+      'BulkExport',
+      expect.objectContaining({ exportLevel: 'System', types: ['Patient'] }),
+      { jobId: id }
+    );
+  });
+
+  test('Success', async () => {
+    const accessToken = await initTestAuth({ membership: { admin: true } });
+
+    const res1 = await request(app)
+      .post(`/fhir/R4/Patient`)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .send({
+        resourceType: 'Patient',
+        name: [{ given: ['Alice'], family: 'Smith' }],
+        address: [{ use: 'home', line: ['123 Main St'], city: 'Anywhere', state: 'CA', postalCode: '90210' }],
+        telecom: [
+          { system: 'phone', value: '555-555-5555' },
+          { system: 'email', value: 'alice@example.com' },
+        ],
+      });
+    expect(res1).toHaveStatus(201);
+
+    // Create observation
+    const res2 = await request(app)
+      .post(`/fhir/R4/Observation`)
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .send({
+        resourceType: 'Observation',
+        status: 'final',
+        code: { text: 'test' },
+        subject: { reference: `Patient/${res1.body.id}` },
+      });
+    expect(res2).toHaveStatus(201);
+
+    // Start the export
+    const initRes = await request(app)
+      .post('/fhir/R4/$export')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('X-Medplum', 'extended')
+      .send({});
+    expect(initRes).toHaveStatus(202);
+    expect(initRes.headers['content-location']).toBeDefined();
+
+    // Check the export status
+    const contentLocation = new URL(initRes.headers['content-location']);
+    await waitForAsyncJob(initRes.headers['content-location'], app, accessToken);
+
+    const statusRes = await request(app)
+      .get(contentLocation.pathname)
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(statusRes).toHaveStatus(200);
+    const resBody = statusRes.body;
+    expect(resBody.requiresAccessToken).toBe(false);
+
+    const output = resBody?.output as BulkDataExportOutput[];
+    expect(Object.values(output).map((ex) => ex.type)).toContainExactly([
+      'ClientApplication',
+      'Observation',
+      'Patient',
+      'Project',
+      'ProjectMembership',
+    ]);
+
+    // Get the export content
+    const outputLocation = new URL(output.find((o) => o.type === 'Observation')?.url as string);
+    const outputContent = (getBinaryStorage() as FileSystemStorage).readFileByUrlForTests(outputLocation);
+
+    // Output format is "ndjson", new line delimited JSON
+    // However, we only expect one Observation, so we can parse it as JSON
+    const resourceJSON = outputContent.trim().split('\n');
+    expect(resourceJSON).toHaveLength(1);
+    expect(JSON.parse(resourceJSON[0])?.subject?.reference).toStrictEqual(`Patient/${res1.body.id}`);
+  });
+
+  test('Export output Binary is bound to async job security context', async () => {
+    const testProject = await createTestProject({ withAccessToken: true });
+
+    const patientRes = await request(app)
+      .post('/fhir/R4/Patient')
+      .set('Authorization', 'Bearer ' + testProject.accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .send({
+        resourceType: 'Patient',
+        name: [{ given: ['Bound'], family: 'Context' }],
+      });
+    expect(patientRes).toHaveStatus(201);
+
+    const initRes = await request(app)
+      .post('/fhir/R4/$export')
+      .set('Authorization', 'Bearer ' + testProject.accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('X-Medplum', 'extended')
+      .send({});
+    expect(initRes).toHaveStatus(202);
+
+    await waitForAsyncJob(initRes.headers['content-location'], app, testProject.accessToken);
+
+    const statusPath = new URL(initRes.headers['content-location']).pathname;
+    const statusRes = await request(app)
+      .get(statusPath)
+      .set('Authorization', 'Bearer ' + testProject.accessToken);
+    expect(statusRes).toHaveStatus(200);
+    expect(statusRes.body.requiresAccessToken).toBe(false);
+
+    const output = statusRes.body.output as BulkDataExportOutput[];
+    const patientOutput = output.find((entry) => entry.type === 'Patient');
+    expect(patientOutput?.url).toBeDefined();
+    const binaryId = new URL(patientOutput?.url as string).pathname.split('/').filter(Boolean)[1];
+    expect(binaryId).toBeDefined();
+
+    const binaryRes = await request(app)
+      .get(`/fhir/R4/Binary/${binaryId}`)
+      .set('Authorization', 'Bearer ' + testProject.accessToken)
+      .set('Accept', ContentType.FHIR_JSON);
+    expect(binaryRes).toHaveStatus(200);
+    expect((binaryRes.body as Binary).securityContext?.reference).toStrictEqual(
+      `AsyncJob/${new URL(initRes.headers['content-location']).pathname.split('/').filter(Boolean).at(-1)}`
+    );
+
+    const restrictedUser = await addTestUser(testProject.project, {
+      accessPolicy: {
+        resourceType: 'AccessPolicy',
+        resource: [{ resourceType: 'Binary', interaction: ['read'] }],
+      },
+    });
+
+    const restrictedBinaryReadRes = await request(app)
+      .get(`/fhir/R4/Binary/${binaryId}`)
+      .set('Authorization', 'Bearer ' + restrictedUser.accessToken);
+    expect(restrictedBinaryReadRes).toHaveStatus(403);
+
+    const restrictedPresignRes = await request(app)
+      .get(`/fhir/R4/Binary/${binaryId}/$presigned-url`)
+      .set('Authorization', 'Bearer ' + restrictedUser.accessToken);
+    expect(restrictedPresignRes).toHaveStatus(403);
+  });
+
+  test('System Export Accepted with GET', async () => {
+    const accessToken = await initTestAuth();
+
+    // Start the export
+    const initRes = await request(app)
+      .get('/fhir/R4/$export')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('X-Medplum', 'extended')
+      .send({});
+    expect(initRes).toHaveStatus(202);
+    expect(initRes.headers['content-location']).toBeDefined();
+    await waitForAsyncJob(initRes.headers['content-location'], app, accessToken);
+  });
+
+  test('Patient Export Accepted with GET', async () => {
+    const accessToken = await initTestAuth();
+
+    // Start the export
+    const initRes = await request(app)
+      .get('/fhir/R4/Patient/$export')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .set('X-Medplum', 'extended')
+      .send({});
+    expect(initRes).toHaveStatus(202);
+    expect(initRes.headers['content-location']).toBeDefined();
+    await waitForAsyncJob(initRes.headers['content-location'], app, accessToken);
+  });
+
+  test.each([
+    '',
+    'Observation?_sort=date',
+    'Observation?_include=Observation:subject',
+    'Patient/123/Observation?status=final',
+    'Observation?unknown=x',
+  ])('Rejects unsupported _typeFilter %s before starting a job', async (typeFilter) => {
+    const accessToken = await initTestAuth();
+    const res = await request(app)
+      .get('/fhir/R4/$export?_typeFilter=' + encodeURIComponent(typeFilter))
+      .set('Authorization', 'Bearer ' + accessToken);
+    expect(res).toHaveStatus(400);
+    expect(res.headers['content-location']).toBeUndefined();
+  });
+
+  test('_typeFilter', async () => {
+    const { repo, accessToken } = await createTestProject({ withAccessToken: true, withRepo: true });
+    const lab = { coding: [{ code: 'laboratory' }] };
+    const vitals = { coding: [{ code: 'vital-signs' }] };
+    const createObservation = (status: Observation['status'], category: CodeableConcept): Promise<Observation> =>
+      repo.createResource<Observation>({
+        resourceType: 'Observation',
+        status,
+        category: [category],
+        code: { text: 'test' },
+      });
+    const finalLab = await createObservation('final', lab);
+    const preliminaryLab = await createObservation('preliminary', lab);
+    const finalVitals = await createObservation('final', vitals);
+    await createObservation('preliminary', vitals);
+    const patient = await repo.createResource<Patient>({ resourceType: 'Patient' });
+    await repo.createResource<Encounter>({ resourceType: 'Encounter', status: 'finished', class: { code: 'AMB' } });
+
+    const initRes = await request(app)
+      .post('/fhir/R4/$export')
+      .set('Authorization', 'Bearer ' + accessToken)
+      .set('Content-Type', ContentType.FHIR_JSON)
+      .send({
+        resourceType: 'Parameters',
+        parameter: [
+          { name: '_type', valueString: 'Patient' },
+          { name: '_type', valueString: 'Observation' },
+          { name: '_typeFilter', valueString: 'Observation?status=final' },
+          { name: '_typeFilter', valueString: 'Observation?category=laboratory' },
+          { name: '_typeFilter', valueString: 'Encounter?status=finished' },
+        ],
+      });
+    expect(initRes).toHaveStatus(202);
+    await waitForAsyncJob(initRes.headers['content-location'], app, accessToken);
+
+    const statusRes = await request(app)
+      .get(new URL(initRes.headers['content-location']).pathname)
+      .set('Authorization', 'Bearer ' + accessToken);
+    const output = statusRes.body.output as BulkDataExportOutput[];
+    const getIds = (type: string): string[] =>
+      (getBinaryStorage() as FileSystemStorage)
+        .readFileByUrlForTests(new URL(output.find((o) => o.type === type)?.url as string))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line).id);
+
+    // Encounter is filtered but not selected by _type, and unfiltered Patient output is unaffected
+    expect(output.map((o) => o.type)).toContainExactly(['Observation', 'Patient']);
+    expect(getIds('Patient')).toStrictEqual([patient.id]);
+    // Filters for the same type are ORed, and finalLab matches both without being duplicated
+    expect(getIds('Observation')).toContainExactly([finalLab.id, preliminaryLab.id, finalVitals.id]);
+  });
+
+  test.each<[string, Pick<FhirRequest, 'method' | 'query' | 'body'>, ExportParameters]>([
+    ['no parameters', { method: 'GET', query: {}, body: undefined }, {}],
+    [
+      'repeated and comma-delimited query values',
+      {
+        method: 'GET',
+        query: { _type: ['Patient,Observation', 'Encounter'], _since: '2024-01-01T00:00:00Z' },
+        body: {},
+      },
+      { types: ['Patient', 'Observation', 'Encounter'], since: '2024-01-01T00:00:00Z' },
+    ],
+    ['explicitly empty _type', { method: 'GET', query: { _type: '' }, body: {} }, { types: [''] }],
+    [
+      'repeated and comma-delimited body values',
+      {
+        method: 'POST',
+        query: {},
+        body: {
+          resourceType: 'Parameters',
+          parameter: [
+            { name: '_type', valueString: 'Patient,Observation' },
+            { name: '_type', valueString: 'Encounter' },
+            { name: '_typeFilter', valueString: 'Observation?status=final,preliminary' },
+            { name: '_typeFilter', valueString: 'Encounter?status=finished' },
+            { name: '_since', valueInstant: '2024-01-01T00:00:00Z' },
+          ],
+        },
+      },
+      {
+        types: ['Patient', 'Observation', 'Encounter'],
+        typeFilters: ['Observation?status=final,preliminary', 'Encounter?status=finished'],
+        since: '2024-01-01T00:00:00Z',
+      },
+    ],
+    [
+      'body takes precedence, query fills omitted parameters',
+      {
+        method: 'POST',
+        query: { _type: 'Encounter', _since: '2023-01-01T00:00:00Z' },
+        body: { resourceType: 'Parameters', parameter: [{ name: '_type', valueString: 'Patient' }] },
+      },
+      { types: ['Patient'], since: '2023-01-01T00:00:00Z' },
+    ],
+  ])('parseExportParameters: %s', (_name, req, expected) => {
+    expect(parseExportParameters({ url: '', pathname: '/$export', params: {}, ...req })).toStrictEqual({
+      since: undefined,
+      types: undefined,
+      typeFilters: undefined,
+      ...expected,
+    });
+  });
+
+  test('parseExportParameters rejects non-string _type', () => {
+    expect(() =>
+      parseExportParameters({
+        method: 'POST',
+        url: '',
+        pathname: '/$export',
+        params: {},
+        query: {},
+        body: { resourceType: 'Parameters', parameter: [{ name: '_type', valueInteger: 5 }] },
+      })
+    ).toThrow('_type and _typeFilter values must be strings');
+  });
+
+  test('exportResourceType iterating through paginated search results', async () =>
+    withTestContext(async () => {
+      // Scope export to observations created in this test so pagination stays fast.
+      const since = new Date().toISOString();
+
+      await systemRepo.createResource<Observation>({
+        resourceType: 'Observation',
+        status: 'preliminary',
+        subject: { reference: 'Patient/123' },
+        code: {
+          text: 'patient observation 1',
+        },
+      });
+
+      await systemRepo.createResource<Observation>({
+        resourceType: 'Observation',
+        status: 'preliminary',
+        subject: { reference: 'Patient/123' },
+        code: {
+          text: 'patient observation 2',
+        },
+      });
+
+      const exporter = new BulkExporter(systemRepo);
+      const exportWriteResourceSpy = vi.spyOn(exporter, 'writeResource');
+      await exporter.start('http://example.com');
+
+      const { project } = await createTestProject();
+      await exportResourceType(exporter, 'Observation', 1, since);
+      const bulkDataExport = await exporter.close(project);
+      expect(bulkDataExport.status).toBe('completed');
+      expect(exportWriteResourceSpy).toHaveBeenCalled();
+    }));
+
+  test('closeWriter removes only specified resource type from tracking', async () =>
+    withTestContext(async () => {
+      const exporter = new BulkExporter(systemRepo);
+      await exporter.start('http://example.com');
+
+      // Create and write multiple resource types
+      const patient = await systemRepo.createResource({
+        resourceType: 'Patient',
+        name: [{ given: ['Test'], family: 'Patient' }],
+      });
+
+      const observation = await systemRepo.createResource<Observation>({
+        resourceType: 'Observation',
+        status: 'final',
+        code: { text: 'test' },
+        subject: { reference: `Patient/${patient.id}` },
+      });
+
+      await exporter.writeResource(patient);
+      await exporter.writeResource(observation);
+
+      // Verify both resource types are tracked
+      expect(exporter.resourceSets.size).toBe(2);
+      expect(exporter.resourceSets.has('Patient')).toBe(true);
+      expect(exporter.resourceSets.has('Observation')).toBe(true);
+      expect(exporter.resourceSets.get('Patient')?.has(patient.id)).toBe(true);
+      expect(exporter.resourceSets.get('Observation')?.has(observation.id)).toBe(true);
+
+      // Close writer for Observation (which clears tracking for that type)
+      await exporter.closeWriter('Observation');
+
+      // Verify only Observation was removed from tracking
+      expect(exporter.resourceSets.size).toBe(1);
+      expect(exporter.resourceSets.has('Patient')).toBe(true);
+      expect(exporter.resourceSets.has('Observation')).toBe(false);
+      expect(exporter.resourceSets.get('Patient')?.has(patient.id)).toBe(true);
+
+      const { project } = await createTestProject();
+      await exporter.close(project);
+    }));
+
+  test('closeWriter called for each resource type during export', async () =>
+    withTestContext(async () => {
+      // Create test resources
+      await systemRepo.createResource({
+        resourceType: 'Patient',
+        name: [{ given: ['Test'], family: 'Patient' }],
+      });
+
+      await systemRepo.createResource<Observation>({
+        resourceType: 'Observation',
+        status: 'final',
+        code: { text: 'test' },
+      });
+
+      const exporter = new BulkExporter(systemRepo);
+      const closeWriterSpy = vi.spyOn(exporter, 'closeWriter');
+
+      await exporter.start('http://example.com');
+      const { project } = await createTestProject();
+
+      // Export only Patient and Observation types
+      await exportResources(exporter, project, ['Patient', 'Observation'], 'System');
+
+      // Verify closeWriter was called for each exported resource type
+      expect(closeWriterSpy).toHaveBeenCalledWith('Patient');
+      expect(closeWriterSpy).toHaveBeenCalledWith('Observation');
+
+      // Verify that tracking was cleared (resourceSets should be empty after close)
+      expect(exporter.resourceSets.size).toBe(0);
+    }));
+
+  test('exportResourceType does not track exported resources for dedupe', async () =>
+    withTestContext(async () => {
+      const since = new Date().toISOString();
+      await systemRepo.createResource<Observation>({
+        resourceType: 'Observation',
+        status: 'final',
+        code: { text: 'no dedupe' },
+      });
+
+      const exporter = new BulkExporter(systemRepo);
+      await exporter.start('http://example.com');
+      const closeWriter = exporter.closeWriter.bind(exporter);
+      let trackedBeforeClose: boolean | undefined;
+      vi.spyOn(exporter, 'closeWriter').mockImplementation(async (resourceType) => {
+        trackedBeforeClose = exporter.resourceSets.has(resourceType);
+        return closeWriter(resourceType);
+      });
+
+      await exportResourceType(exporter, 'Observation', 1, since);
+      expect(trackedBeforeClose).toBe(false);
+      expect(exporter.writers.Observation).toBeDefined();
+
+      const { project } = await createTestProject();
+      await exporter.close(project);
+    }));
+
+  test('writeResource dedupes by default', async () =>
+    withTestContext(async () => {
+      const patient = await systemRepo.createResource<Patient>({ resourceType: 'Patient' });
+
+      const exporter = new BulkExporter(systemRepo);
+      await exporter.start('http://example.com');
+      await exporter.writeResource(patient);
+      await exporter.writeResource(patient);
+
+      const { project } = await createTestProject();
+      await exporter.close(project);
+
+      const binary = await systemRepo.readResource<Binary>('Binary', exporter.writers.Patient.binary.id);
+      const content = await streamToString(await getBinaryStorage().readBinary(binary));
+      expect(content.trim().split('\n')).toHaveLength(1);
+    }));
+
+  test('Backpressure waits do not leak stream listeners', async () =>
+    withTestContext(async () => {
+      const patient = await systemRepo.createResource<Patient>({ resourceType: 'Patient' });
+
+      const exporter = new BulkExporter(systemRepo);
+      await exporter.start('http://example.com');
+      await exporter.writeResource(patient, { skipDedupe: true });
+      const stream = exporter.writers.Patient['stream'];
+      // Wait for the storage pipeline to attach its own listeners before sampling
+      await vi.waitFor(() => expect(stream.listenerCount('error')).toBeGreaterThan(0));
+      const baseline = stream.listenerCount('error');
+
+      // Simulate a full buffer on every write so each one waits for 'drain'
+      const writeSpy = vi.spyOn(stream, 'write').mockImplementation(() => {
+        setImmediate(() => stream.emit('drain'));
+        return false;
+      });
+      for (let i = 0; i < 20; i++) {
+        await exporter.writeResource(patient, { skipDedupe: true });
+      }
+      expect(writeSpy).toHaveBeenCalledTimes(20);
+      expect(stream.listenerCount('error')).toBe(baseline);
+      writeSpy.mockRestore();
+
+      const { project } = await createTestProject();
+      await exporter.close(project);
+    }));
+});

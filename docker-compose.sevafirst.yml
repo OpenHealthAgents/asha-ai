@@ -1,0 +1,313 @@
+version: "3.9"
+
+# ==============================================================================
+# SevaFirst: Frontline ASHA AI Copilot Master Orchestration Stack
+# Government of India - National Health Mission (NHM) & ABDM Compliant
+# ==============================================================================
+
+networks:
+  sevafirst-mesh:
+    driver: bridge
+    name: sevafirst-mesh
+
+volumes:
+  pg_medplum_data:
+  pg_iam_data:
+  pg_kestra_data:
+  redis_data:
+  minio_data:
+  kestra_storage:
+  prometheus_data:
+
+services:
+  # ── 1. FHIR Clinical Data Repository (Medplum + Postgres + Redis) ───────────
+  postgres-medplum:
+    image: postgres:16-alpine
+    container_name: sevafirst-postgres-medplum
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medplum
+      POSTGRES_PASSWORD: medplum_secure_password
+      POSTGRES_DB: medplum
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg_medplum_data:/var/lib/postgresql/data
+    networks:
+      - sevafirst-mesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medplum -d medplum"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis-medplum:
+    image: redis:7-alpine
+    container_name: sevafirst-redis-medplum
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - sevafirst-mesh
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  medplum-server:
+    image: medplum/medplum-server:latest
+    container_name: sevafirst-medplum-fhir
+    restart: unless-stopped
+    depends_on:
+      postgres-medplum:
+        condition: service_healthy
+      redis-medplum:
+        condition: service_healthy
+    ports:
+      - "8103:8103"
+    environment:
+      MEDPLUM_BASE_URL: "http://localhost:8103"
+      MEDPLUM_DATABASE_HOST: postgres-medplum
+      MEDPLUM_DATABASE_PORT: "5432"
+      MEDPLUM_DATABASE_NAME: medplum
+      MEDPLUM_DATABASE_USERNAME: medplum
+      MEDPLUM_DATABASE_PASSWORD: medplum_secure_password
+      MEDPLUM_REDIS_HOST: redis-medplum
+      MEDPLUM_REDIS_PORT: "6379"
+      MEDPLUM_REGISTER_ENABLED: "true"
+    networks:
+      - sevafirst-mesh
+
+  # ── 2. Identity & Access Management (bezs-iam + Dedicated Postgres) ─────────
+  postgres-iam:
+    image: postgres:16-alpine
+    container_name: sevafirst-postgres-iam
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: iam_user
+      POSTGRES_PASSWORD: iam_password
+      POSTGRES_DB: iam_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_iam_data:/var/lib/postgresql/data
+    networks:
+      - sevafirst-mesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iam_user -d iam_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bezs-iam:
+    build:
+      context: ./bezs-iam-main
+      dockerfile: Dockerfile
+    container_name: sevafirst-iam
+    restart: unless-stopped
+    depends_on:
+      postgres-iam:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: "postgresql://iam_user:iam_password@postgres-iam:5432/iam_db?schema=public"
+      BETTER_AUTH_SECRET: "sevafirst_national_health_mission_secret_key_32chars"
+      BETTER_AUTH_URL: "http://localhost:3001"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3001"
+      OFFLINE_SESSION_TTL_DAYS: "14"
+    networks:
+      - sevafirst-mesh
+
+  # ── 3. Object & Media Storage (MinIO S3 + bezs-filenest) ────────────────────
+  minio-storage:
+    image: minio/minio:RELEASE.2024-05-28T07-16-04Z
+    container_name: sevafirst-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin_secure
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - sevafirst-mesh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bezs-filenest:
+    build:
+      context: ./bezs-filenest-main/backend
+      dockerfile: Dockerfile
+    container_name: sevafirst-filenest
+    restart: unless-stopped
+    depends_on:
+      minio-storage:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT: "http://minio-storage:9000"
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin_secure
+      S3_BUCKET: asha-field-media
+      S3_REGION: ap-south-1
+      MAX_AUDIO_CHUNK_MB: "5"
+    networks:
+      - sevafirst-mesh
+
+  # ── 4. EMR GraphQL Gateway & Offline Field Sync (bezs-emr-gql) ──────────────
+  bezs-emr-gql:
+    build:
+      context: ./bezs-emr-gql-main
+      dockerfile: Dockerfile
+    container_name: sevafirst-emr-gql
+    restart: unless-stopped
+    depends_on:
+      - medplum-server
+      - redis-medplum
+    ports:
+      - "8000:8000"
+    environment:
+      FHIR_SERVER_URL: "http://medplum-server:8103/fhir/R4"
+      REDIS_URL: "redis://redis-medplum:6379/0"
+      IAM_SERVICE_URL: "http://bezs-iam:3000"
+      PORT: "8000"
+    networks:
+      - sevafirst-mesh
+
+  # ── 5. Clinical AI Intelligence & Sarvam MCP Server (langcare-mcp-fhir) ─────
+  langcare-mcp-fhir:
+    build:
+      context: ./langcare-mcp-fhir-main
+      dockerfile: Dockerfile
+    container_name: sevafirst-clinical-mcp
+    restart: unless-stopped
+    depends_on:
+      - bezs-emr-gql
+    ports:
+      - "8090:8090"
+    environment:
+      FHIR_GATEWAY_URL: "http://bezs-emr-gql:8000"
+      SARVAM_API_KEY: "sarvam_offline_edge_model_key"
+      PORT: "8090"
+      ENABLE_NHM_IMNCI_RULES: "true"
+      ENABLE_VOICE_EXTRACTION: "true"
+    networks:
+      - sevafirst-mesh
+
+  # ── 6. Event-Driven Workflow Orchestration (Kestra Engine) ──────────────────
+  postgres-kestra:
+    image: postgres:16-alpine
+    container_name: sevafirst-postgres-kestra
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      POSTGRES_PASSWORD: kestra_password
+    volumes:
+      - pg_kestra_data:/var/lib/postgresql/data
+    networks:
+      - sevafirst-mesh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kestra -d kestra"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kestra:
+    image: kestra/kestra:v0.18.0
+    container_name: sevafirst-kestra
+    restart: unless-stopped
+    depends_on:
+      postgres-kestra:
+        condition: service_healthy
+    ports:
+      - "8085:8080"
+    command: server standalone
+    volumes:
+      - kestra_storage:/app/storage
+      - ./flows/sevafirst_frontline:/flows/sevafirst_frontline:ro
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres-kestra:5432/kestra
+            driverClassName: org.postgresql.Driver
+            username: kestra
+            password: kestra_password
+        kestra:
+          server:
+            basic-auth:
+              enabled: false
+          plugins:
+            paths:
+              - /flows/sevafirst_frontline
+    networks:
+      - sevafirst-mesh
+
+  # ── 7. Primary Health Centre Command Center (bezs-hms) ──────────────────────
+  bezs-hms:
+    build:
+      context: ./bezs-hms-main
+      dockerfile: Dockerfile
+    container_name: sevafirst-phc-hms
+    restart: unless-stopped
+    depends_on:
+      - bezs-emr-gql
+      - kestra
+    ports:
+      - "3002:3000"
+    environment:
+      NEXT_PUBLIC_APP_URL: "http://localhost:3002"
+      NEXT_PUBLIC_IAM_URL: "http://localhost:3001"
+      NEXT_PUBLIC_EMR_GQL_URL: "http://localhost:8000/graphql"
+      KESTRA_WEBHOOK_URL: "http://kestra:8080/api/v1/executions/webhook/sevafirst_frontline"
+      AMBULANCE_DISPATCH_HOTLINE: "108"
+    networks:
+      - sevafirst-mesh
+
+  # ── 8. Clinical Observability, Prometheus & Governance Audit ────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: sevafirst-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    networks:
+      - sevafirst-mesh
+
+  bezs-observability:
+    build:
+      context: ./bezs-observability-main
+      dockerfile: Dockerfile
+    container_name: sevafirst-observability
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3003:3000"
+    environment:
+      PROMETHEUS_URL: "http://prometheus:9090"
+      SEVAFIRST_ENV: "production"
+      APP_NAME: "SevaFirst Impact Dashboard"
+    networks:
+      - sevafirst-mesh

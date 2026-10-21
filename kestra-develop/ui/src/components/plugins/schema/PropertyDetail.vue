@@ -1,0 +1,162 @@
+<template>
+    <div class="property-detail">
+        <div v-if="subtype">
+            <span>{{ $t("plugins.sub_type") }}</span>
+            <a v-if="subtype.startsWith('#')" :href="subtype" class="ref-type-link" @click.stop>
+                <KsTag type="info">
+                    {{ className(subtype) }}
+                    <template #icon>
+                        <EyeOutline />
+                    </template>
+                </KsTag>
+            </a>
+            <KsTag v-else>
+                {{ subtype }}
+            </KsTag>
+        </div>
+
+        <template v-for="row in VALUE_ROWS" :key="row.key">
+            <div v-if="isVisible(row)">
+                <span>{{ $t(row.labelKey) }}</span>
+                <code class="value-pill">
+                    {{ formatValue(row) }}
+                </code>
+            </div>
+        </template>
+
+        <div v-if="enumValues !== undefined">
+            <span>{{ $t("plugins.possible_values") }}</span>
+            <div class="enum-values">
+                <KsTag v-for="(possibleValue, index) in enumValues" :key="index">
+                    {{ possibleValue }}
+                </KsTag>
+            </div>
+        </div>
+
+        <div v-if="property.title !== undefined || property.description !== undefined">
+            <div class="property-description markdown">
+                <slot
+                    v-if="property.title !== undefined"
+                    name="markdown"
+                    :content="sanitizeForMarkdown(property.title)"
+                />
+                <slot
+                    v-if="property.description !== undefined"
+                    name="markdown"
+                    :content="sanitizeForMarkdown(property.description)"
+                />
+                <div v-if="property['$internalStorageURI']">
+                    <KsAlert type="info" :closable="false">
+                        <slot
+                            name="markdown"
+                            :content="$t('plugins.internal_storage_uri_hint', {example: INTERNAL_STORAGE_URI_EXAMPLE})"
+                        />
+                    </KsAlert>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script setup lang="ts">
+    import {className, extractEnumValues, extractTypeInfo, sanitizeForMarkdown, type JSONProperty} from "./utils/schemaUtils"
+    import {KsAlert, KsTag} from "@kestra-io/design-system"
+    import EyeOutline from "vue-material-design-icons/EyeOutline.vue"
+
+    const INTERNAL_STORAGE_URI_EXAMPLE = "`{{ outputs.mytask.uri }}`"
+
+    type ValueRow = {
+        key: keyof JSONProperty;
+        labelKey: string;
+        format?: (value: JSONProperty[keyof JSONProperty]) => string;
+        show?: (value: JSONProperty[keyof JSONProperty]) => boolean;
+    };
+
+    const VALUE_ROWS: readonly ValueRow[] = [
+        {key: "default", labelKey: "default"},
+        {key: "pattern", labelKey: "plugins.validation_regexp"},
+        {key: "unit", labelKey: "plugins.unit", show: (value) => typeof value === "string" && value.trim().length > 0},
+        {key: "minLength", labelKey: "plugins.min_length"},
+        {key: "maxLength", labelKey: "plugins.max_length"},
+        {key: "minItems", labelKey: "plugins.min_items"},
+        {key: "maxItems", labelKey: "plugins.max_items"},
+        {key: "minimum", labelKey: "plugins.minimum", format: (value) => `>= ${value}`},
+        {key: "exclusiveMinimum", labelKey: "plugins.minimum", format: (value) => `> ${value}`},
+        {key: "maximum", labelKey: "plugins.maximum", format: (value) => `<= ${value}`},
+        {key: "exclusiveMaximum", labelKey: "plugins.maximum", format: (value) => `< ${value}`},
+        {key: "format", labelKey: "plugins.format"},
+    ]
+
+    const props = defineProps<{property: JSONProperty}>()
+
+    const subtype = extractTypeInfo(props.property).subType
+    const enumValues = extractEnumValues(props.property)
+
+    const isVisible = (row: ValueRow) => {
+        const value = props.property[row.key]
+        return value !== undefined && (row.show?.(value) ?? true)
+    }
+
+    const formatValue = (row: ValueRow) => {
+        const value = props.property[row.key]
+        return row.format ? row.format(value) : value
+    }
+</script>
+
+<style scoped>
+    .property-detail > * {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: var(--spacer);
+        padding: 1rem 0;
+        border-top: 1px solid var(--ks-border-default);
+
+        span, .property-description:deep(p) {
+            line-height: 1.5rem;
+            font-size: var(--ks-font-size-sm) !important;
+        }
+
+        .property-description {
+            color: var(--ks-text-secondary);
+        }
+
+        code {
+            color: var(--ks-text-primary);
+            background: var(--ks-bg-surface) !important;
+        }
+
+        &:first-child {
+            padding-top: 0;
+            border-top: none !important;
+        }
+
+        &:last-child {
+            padding-bottom: 0;
+        }
+
+        & > * {
+            width: fit-content;
+        }
+    }
+
+    .ref-type-link {
+        display: inline-flex;
+        text-decoration: none;
+    }
+
+    .value-pill {
+        font-size: var(--ks-font-size-xs);
+        line-height: 1;
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--ks-border-default);
+        border-radius: var(--ks-radius-base);
+    }
+
+    .enum-values {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 2rem;
+    }
+</style>

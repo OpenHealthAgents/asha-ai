@@ -1,0 +1,1322 @@
+<template>
+    <TopNavBar v-if="topbar" :title="routeInfo.title">
+        <template #actions v-if="displayButtons">
+            <ul>
+                <template v-if="$route.name === 'executions/list'">
+                    <li>
+                        <NavBarActionsDropdown>
+                            <NavBarAction :icon="Download" :label="$t('export_csv')" @click="exportExecutionsAsStream()" />
+                        </NavBarActionsDropdown>
+                    </li>
+                    <li>
+                        <template v-if="hasAnyExecute && !isMobile">
+                            <TriggerFlow />
+                        </template>
+                    </li>
+                </template>
+                <template v-if="routeFamily($route.name) === 'flows/update'">
+                    <li>
+                        <template v-if="isAllowedEdit">
+                            <KsButton :icon="Pencil" size="large" @click="editFlow" :disabled="isReadOnly">
+                                {{ $t("edit flow") }}
+                            </KsButton>
+                        </template>
+                    </li>
+                    <li>
+                        <TriggerFlow
+                            v-if="flowStore.flow"
+                            :disabled="flowStore.flow.disabled ?? isReadOnly"
+                            :flowId="flowStore.flow.id"
+                            :namespace="flowStore.flow.namespace"
+                        />
+                    </li>
+                </template>
+            </ul>
+        </template>
+    </TopNavBar>
+    <BottomActionBar v-if="displayButtons && $route.name === 'executions/list' && hasAnyExecute">
+        <TriggerFlow>
+            <template #button="{execute, disabled}">
+                <KsButton type="primary" size="large" block :icon="PlayOutline" :disabled="disabled" @click="execute">
+                    {{ $t("execute") }}
+                </KsButton>
+            </template>
+        </TriggerFlow>
+    </BottomActionBar>
+    <section :class="{'full-container': fitHeightResolved}">
+        <KsDataTable
+            ref="dataTable"
+            :loadData="loadData"
+            :data="executionsStore.executions"
+            :total="executionsStore.total"
+            :currentPage="currentPage"
+            :pageSize="currentSize"
+            @page-changed="onPageChanged"
+            @sort-change="({prop, order}: {prop: string | null; order: string | null}) => { if (!props.embed) router.push({query: {...route.query, sort: `${prop}:${order === 'ascending' ? 'asc' : 'desc'}`}}) }"
+            @row-dblclick="(row: Execution) => router.push({name: dblClickRouteName, params: executionParams(row)})"
+            @row-click="onRowClick"
+            :mobileColumns="mobileColumns"
+            :selectionMapper="selectionMapper"
+            @ready="ready = true"
+            :defaultSort="{prop: 'state.startDate', order: 'descending'}"
+            :selectable="!hidden?.includes('selection') && canCheck"
+            :no-data-text="noDataText ?? $t('no_results.executions')"
+            :rowKey="(row: Execution) => row.id"
+            :fitHeight="fitHeightResolved"
+        >
+            <template #navbar v-if="isDisplayedTop">
+                <KSFilter
+                    :configuration="namespace === undefined || flowId === undefined ? executionFilter : flowExecutionFilter"
+                    :properties="{
+                        shown: true,
+                        columns: allColumns,
+                        displayColumns,
+                        storageKey: storageKey
+                    }"
+                    :prefix="'executions'"
+                    :tableOptions="{
+                        chart: {shown: !hideChart, value: showChart, callback: onShowChartChange},
+                        refresh: {shown: true, callback: refresh}
+                    }"
+                    @update-properties="updateDisplayColumns"
+                    :defaultScope="defaultScopeFilter"
+                    :defaultDuration="chartDefaultDuration"
+                />
+            </template>
+
+            <template v-if="showStatChart()" #top>
+                <Sections ref="dashboardComponent" :dashboard="DEFAULT_DASHBOARD" :charts :baseFilters="lockedFilters" showDefault class="stat-charts" />
+            </template>
+
+            <template #bulk-actions>
+                <KsButton v-if="canUpdate" :icon="StateMachine" @click="changeStatusDialogVisible = !changeStatusDialogVisible">
+                    {{ $t("change state") }}
+                </KsButton>
+                <KsButton v-if="canRestart" :icon="Restart" @click="isOpenRestartModal = !isOpenRestartModal">
+                    {{ $t("restart") }}
+                </KsButton>
+                <KsButton v-if="canReplay" :icon="PlayBoxMultiple" @click="isOpenReplayModal = !isOpenReplayModal">
+                    {{ $t("replay") }}
+                </KsButton>
+                <KsButton v-if="canKill" :icon="StopCircleOutline" @click="killExecutions()">
+                    {{ $t("kill") }}
+                </KsButton>
+                <KsButton v-if="canDelete" :icon="Delete" @click="deleteExecutions()">
+                    {{ $t("delete") }}
+                </KsButton>
+
+                <component
+                    :is="action"
+                    v-for="(action, i) in bulkActionComponents"
+                    :key="i"
+                    :selection="selection"
+                    :queryBulkAction="queryBulkAction"
+                    :namespace="props.namespace"
+                    :loadQuery="loadQuery"
+                    @done="() => {toggleAllUnselected(); dataTable?.resetAndReload()}"
+                />
+
+                <KsDropdown>
+                    <KsButton :aria-label="$t('bulk actions')">
+                        <DotsVertical />
+                    </KsButton>
+                    <template #dropdown>
+                        <KsDropdownMenu>
+                            <KsDropdownItem v-if="canChangeLabels" :icon="LabelMultiple" @click=" isOpenLabelsModal = !isOpenLabelsModal">
+                                {{ $t("Set labels") }}
+                            </KsDropdownItem>
+                            <KsDropdownItem v-if="canResume" :icon="PlayBox" @click="resumeExecutions()">
+                                {{ $t("resume") }}
+                            </KsDropdownItem>
+                            <KsDropdownItem v-if="canPause" :icon="PauseBox" @click="pauseExecutions()">
+                                {{ $t("pause") }}
+                            </KsDropdownItem>
+                            <KsDropdownItem v-if="canUnqueue" :icon="QueueFirstInLastOut" @click="unqueueDialogVisible = true">
+                                {{ $t("unqueue") }}
+                            </KsDropdownItem>
+                            <KsDropdownItem v-if="canForceRun" :icon="RunFast" @click="forceRunExecutions()">
+                                {{ $t("force run") }}
+                            </KsDropdownItem>
+                        </KsDropdownMenu>
+                    </template>
+                </KsDropdown>
+                <KsDialog
+                    v-if="isOpenLabelsModal"
+                    v-model="isOpenLabelsModal"
+                    destroyOnClose
+                    :appendToBody="true"
+                    alignCenter
+                    scrollable
+                >
+                    <template #header>
+                        <h5>{{ $t("Set labels") }}</h5>
+                    </template>
+
+                    <template #footer>
+                        <KsButton @click="isOpenLabelsModal = false">
+                            {{ $t("cancel") }}
+                        </KsButton>
+                        <KsButton type="primary" :disabled="hasInvalidLabels" @click="setLabels()">
+                            {{ $t("ok") }}
+                        </KsButton>
+                    </template>
+
+                    <KsForm labelPosition="top">
+                        <KsFormItem :label="$t('execution labels')">
+                            <LabelInput v-model:labels="executionLabels" />
+                        </KsFormItem>
+                    </KsForm>
+                </KsDialog>
+            </template>
+
+            <KsTableColumn
+                prop="id"
+                sortable="custom"
+                :sortOrders="['ascending', 'descending']"
+                :label="$t('id')"
+            >
+                <template #default="scope">
+                    <RouterLink
+                        :to="{
+                            name: 'executions/update',
+                            params: {
+                                namespace: scope.row?.namespace,
+                                flowId: scope.row?.flowId,
+                                id: scope.row?.id
+                            }
+                        }"
+                        class="execution-id"
+                        :aria-label="isMobile ? `${scope.row?.flowId} ${scope.row?.id}` : undefined"
+                    >
+                        <KsId :value="scope.row?.id" :shrink="true" placement="right" />
+                    </RouterLink>
+                </template>
+            </KsTableColumn>
+
+            <KsTableColumn
+                v-for="col in visibleColumns"
+                :key="col.prop"
+                :prop="col.prop"
+                :label="col.label"
+                :class="col.prop === 'flowRevision' ? 'shrink' : ''"
+                :align="col.prop === 'inputs' ? 'center' : undefined"
+                :sortable="isColumnSortable(col.prop) ? 'custom' : false"
+                :sortOrders="isColumnSortable(col.prop) ? ['ascending', 'descending'] : []"
+            >
+                <template #default="scope">
+                    <template v-if="col.prop === 'state.startDate'">
+                        <KsDateAgo :inverted="!isMobile" :date="scope.row?.state?.startDate" />
+                    </template>
+                    <template v-else-if="col.prop === 'state.endDate'">
+                        <KsDateAgo :inverted="true" :date="scope.row?.state?.endDate" />
+                    </template>
+                    <template v-else-if="col.prop === 'state.duration'">
+                        <Duration :field="scope.row?.state?.duration" :startDate="scope.row?.state?.startDate" />
+                    </template>
+                    <template v-else-if="col.prop === 'namespace' && routeFamily($route.name) !== 'flows/update'">
+                        <KsEntityLink
+                            v-if="scope.row?.namespace"
+                            entity="namespace"
+                            :value="scope.row.namespace"
+                            :to="{name: 'namespaces/update', params: {id: scope.row.namespace}}"
+                        />
+                    </template>
+                    <template v-else-if="col.prop === 'flowId' && routeFamily($route.name) !== 'flows/update'">
+                        <KsEntityLink
+                            v-if="scope.row?.flowId"
+                            entity="flow"
+                            :value="scope.row.flowId"
+                            :to="{name: 'flows/update', params: {namespace: scope.row?.namespace, id: scope.row?.flowId}}"
+                        />
+                    </template>
+                    <template v-else-if="col.prop === 'labels'">
+                        <Labels
+                            :labels="filterHiddenLabels(scope.row?.labels, miscStore.configs?.hiddenLabelsPrefixes, route.query)"
+                            :max="3"
+                            @click.prevent.stop
+                        />
+                    </template>
+                    <template v-else-if="col.prop === 'state.current'">
+                        <KsExecutionStatus
+                            :status="scope.row?.state?.current"
+                            size="small"
+                            :dot="isMobile"
+                            :clickable="!isMobile"
+                            v-bind="isMobile ? {} : {'aria-label': $t('filter by status', {status: scope.row?.state?.current})}"
+                            @click.stop="!isMobile && onStateClick(scope.row?.state?.current)"
+                        />
+                    </template>
+                    <template v-else-if="col.prop === 'flowRevision'">
+                        <code class="code-text">{{ scope.row?.flowRevision }}</code>
+                    </template>
+                    <template v-else-if="col.prop === 'inputs'">
+                        <KsTooltip>
+                            <template #content>
+                                <pre class="inputs-preview">{{ JSON.stringify(scope.row?.inputs, null, "\t") }}</pre>
+                            </template>
+                            <div>
+                                <Import v-if="scope.row?.inputs" class="inputs-icon" />
+                            </div>
+                        </KsTooltip>
+                    </template>
+                    <template v-else-if="col.prop === 'taskRunList.taskId'">
+                        <code class="code-text">
+                            {{ scope.row?.taskRunList?.slice(-1)[0]?.taskId }}
+                            {{
+                                scope.row?.taskRunList?.slice(-1)[0]?.attempts?.length > 1 ? `(${scope.row?.taskRunList?.slice(-1)[0]?.attempts?.length})` : ""
+                            }}
+                        </code>
+                    </template>
+                    <template v-else-if="col.prop === 'trigger'">
+                        <TriggerAvatar :execution="(scope.row as Execution)" />
+                    </template>
+                    <template v-else-if="col.prop === 'trigger.variables.executionId'">
+                        <RouterLink
+                            v-if="scope.row?.trigger?.type === 'io.kestra.plugin.core.flow.Subflow' && scope.row?.trigger?.variables?.executionId"
+                            :to="{
+                                name: 'executions/update',
+                                params: {
+                                    namespace: scope.row?.namespace,
+                                    flowId: scope.row?.flowId,
+                                    id: scope.row?.trigger?.variables?.executionId
+                                }
+                            }"
+                        >
+                            <KsId :value="scope.row?.trigger?.variables?.executionId" :shrink="true" />
+                        </RouterLink>
+                        <span v-else>-</span>
+                    </template>
+                    <template v-else-if="cellComponents[col.prop]">
+                        <component :is="cellComponents[col.prop]" :execution="(scope.row as Execution)" />
+                    </template>
+                </template>
+                <template v-if="col.prop === 'taskRunList.taskId'" #header="scope">
+                    <KsTooltip :content="$t('taskid column details')">
+                        {{ scope.column.label }}
+                    </KsTooltip>
+                </template>
+            </KsTableColumn>
+        </KsDataTable>
+    </section>
+
+    <KsDialog v-if="changeStatusDialogVisible" v-model="changeStatusDialogVisible" :id="Utils.uid()" destroyOnClose :appendToBody="true" alignCenter>
+        <template #header>
+            <h5>{{ $t("confirmation") }}</h5>
+        </template>
+
+        <template #default>
+            <i18n-t keypath="bulk change state" tag="p">
+                <template #executionCount><code>{{ bulkActionCount }}</code></template>
+            </i18n-t>
+
+            <KsSelect
+                :required="true"
+                v-model="selectedStatus"
+            >
+                <KsOption
+                    v-for="item in states"
+                    :key="item.code"
+                    :value="item.code"
+                >
+                    <template #default>
+                        <KsExecutionStatus size="small" :label="false" class="status-indicator" :status="item.code" />
+                        <i18n-t keypath="mark as" tag="span">
+                            <template #status><code>{{ item.code }}</code></template>
+                        </i18n-t>
+                    </template>
+                </KsOption>
+            </KsSelect>
+        </template>
+
+        <template #footer>
+            <KsButton @click="changeStatusDialogVisible = false">
+                {{ $t('cancel') }}
+            </KsButton>
+            <KsButton
+                type="primary"
+                @click="changeStatus()"
+            >
+                {{ $t('ok') }}
+            </KsButton>
+        </template>
+    </KsDialog>
+
+    <KsDialog v-if="unqueueDialogVisible" v-model="unqueueDialogVisible" destroyOnClose :appendToBody="true">
+        <template #header>
+            <h5>{{ $t("confirmation") }}</h5>
+        </template>
+
+        <template #default>
+            <i18n-t keypath="unqueue title multiple" tag="p">
+                <template #count><code>{{ bulkActionCount }}</code></template>
+            </i18n-t>
+            <p>{{ $t("unqueue multiple note") }}</p>
+
+            <KsSelect
+                :required="true"
+                v-model="selectedStatus"
+            >
+                <KsOption
+                    v-for="state in unqueueStates"
+                    :key="state"
+                    :value="state"
+                >
+                    <template #default>
+                        <KsExecutionStatus size="small" :label="false" class="status-indicator" :status="state" />
+                        <i18n-t keypath="unqueue as" tag="span">
+                            <template #status><code>{{ state }}</code></template>
+                        </i18n-t>
+                    </template>
+                </KsOption>
+            </KsSelect>
+        </template>
+
+        <template #footer>
+            <KsButton @click="unqueueDialogVisible = false">
+                {{ $t('cancel') }}
+            </KsButton>
+            <KsButton
+                type="primary"
+                @click="unqueueExecutions()"
+            >
+                {{ $t('ok') }}
+            </KsButton>
+        </template>
+    </KsDialog>
+
+    <KsDialog v-if="isOpenReplayModal" v-model="isOpenReplayModal" :id="Utils.uid()" destroyOnClose :appendToBody="true" alignCenter>
+        <template #header>
+            <h5>{{ $t("confirmation") }}</h5>
+        </template>
+
+        <template #default>
+            <i18n-t keypath="bulk replay" tag="p">
+                <template #executionCount><code>{{ bulkActionCount }}</code></template>
+            </i18n-t>
+        </template>
+
+        <template #footer>
+            <KsButton @click="isOpenReplayModal = false">
+                {{ $t('cancel') }}
+            </KsButton>
+            <KsButton @click="replayExecutions(true)">
+                {{ $t('replay latest revision') }}
+            </KsButton>
+            <KsButton
+                type="primary"
+                @click="replayExecutions(false)"
+            >
+                {{ $t('ok') }}
+            </KsButton>
+        </template>
+    </KsDialog>
+
+    <KsDialog v-if="isOpenRestartModal" v-model="isOpenRestartModal" :id="Utils.uid()" destroyOnClose :appendToBody="true" alignCenter>
+        <template #header>
+            <h5>{{ $t("confirmation") }}</h5>
+        </template>
+
+        <template #default>
+            <i18n-t keypath="bulk restart" tag="p">
+                <template #executionCount><code>{{ bulkActionCount }}</code></template>
+            </i18n-t>
+        </template>
+
+        <template #footer>
+            <KsButton @click="isOpenRestartModal = false">
+                {{ $t('cancel') }}
+            </KsButton>
+            <KsButton
+                type="primary"
+                @click="restartExecutions"
+            >
+                {{ $t('ok') }}
+            </KsButton>
+        </template>
+    </KsDialog>
+</template>
+
+<script setup lang="ts">
+    import {filterHiddenLabels} from "../../utils/labels"
+    import {useI18n} from "vue-i18n"
+    import {asProblem} from "@kestra-io/kestra-sdk"
+    import {problemBulkBody, problemTitle} from "../../utils/problem"
+    import {useRoute, useRouter} from "vue-router"
+    import {routeFamily} from "../../utils/routeFamily"
+    import {ref, computed, watch, useTemplateRef} from "vue"
+    import {useIsMobile} from "../../composables/useIsMobile"
+    import {isPlainRowActivation} from "../../utils/rowNavigation"
+    import PlayOutline from "vue-material-design-icons/PlayOutline.vue"
+    import BottomActionBar from "../layout/BottomActionBar.vue"
+    import * as YAML_UTILS from "@kestra-io/topology/flow-yaml-utils"
+    import {KsFormItem, KsMessageBox, normalizeRouteTimeRangeFilter, deepMerge} from "@kestra-io/design-system"
+    import {useExecutionDeletionDialog} from "./composables/useExecutionDeletionDialog"
+
+    import Delete from "vue-material-design-icons/Delete.vue"
+    import Pencil from "vue-material-design-icons/Pencil.vue"
+    import Import from "vue-material-design-icons/Import.vue"
+    import Restart from "vue-material-design-icons/Restart.vue"
+    import RunFast from "vue-material-design-icons/RunFast.vue"
+    import PlayBox from "vue-material-design-icons/PlayBox.vue"
+    import PauseBox from "vue-material-design-icons/PauseBox.vue"
+    import DotsVertical from "vue-material-design-icons/DotsVertical.vue"
+    import StateMachine from "vue-material-design-icons/StateMachine.vue"
+    import LabelMultiple from "vue-material-design-icons/LabelMultiple.vue"
+    import PlayBoxMultiple from "vue-material-design-icons/PlayBoxMultiple.vue"
+    import StopCircleOutline from "vue-material-design-icons/StopCircleOutline.vue"
+    import QueueFirstInLastOut from "vue-material-design-icons/QueueFirstInLastOut.vue"
+    import Download from "vue-material-design-icons/Download.vue"
+
+    import {KsId} from "@kestra-io/design-system"
+    import {State} from "@kestra-io/design-system"
+    import {KsExecutionStatus} from "@kestra-io/design-system"
+    import Labels from "../layout/Labels.vue"
+
+    import {KsFilter as KSFilter} from "@kestra-io/design-system"
+    import useRestoreUrl from "../../composables/useRestoreUrl"
+
+    const {loadInit} = useRestoreUrl()
+    import Sections from "../dashboard/sections/Sections.vue"
+    import type {Chart} from "../dashboard/types"
+    import TopNavBar from "../../components/layout/TopNavBar.vue"
+    import NavBarActionsDropdown from "../../components/layout/NavBarActionsDropdown.vue"
+    import NavBarAction from "../../components/layout/NavBarAction.vue"
+    import LabelInput from "../../components/labels/LabelInput.vue"
+    import TriggerFlow from "../../components/flows/TriggerFlow.vue"
+    import TriggerAvatar from "../../components/flows/TriggerAvatar.vue"
+
+    import {filterValidLabels, keepSupportedFilters, FILTER_FIELD_PATTERN} from "./utils"
+    import {
+        FALLBACK_TIME_RANGE,
+        queryHasAbsoluteDateFilter,
+        queryHasUserFilters,
+        readTimeRangeFromQuery,
+        widenEmptyTimeRange,
+    } from "./timeRangeWiden"
+    import {hasInvalidLabelKeys} from "../../utils/executionLabels"
+    import {useToast} from "../../utils/toast"
+    import {storageKeys} from "../../utils/constants"
+    import * as Utils from "../../utils/utils"
+    import Duration from "../../components/dashboard/sections/table/columns/Duration.vue"
+
+    import action from "../../models/action"
+    import resource from "../../models/resource"
+
+    import useRouteContext from "../../composables/useRouteContext"
+    import {useTableColumns} from "@kestra-io/design-system"
+
+    import {useFlowStore} from "../../stores/flow"
+    import {useAuthStore} from "override/stores/auth"
+    import {useMiscStore} from "override/stores/misc"
+    import {type Execution, type Label, useExecutionsStore} from "../../stores/executions"
+    import {getExtraColumns, cellComponents, bulkActionComponents} from "override/components/executions/executionsExtensions"
+
+    import {useExecutionFilter} from "../filter/configurations/executionFilter"
+    import {useFlowExecutionFilter} from "../filter/configurations/flowExecutionFilter"
+    import {useStateFilter} from "../filter/composables/useStateFilter"
+    import YAML_CHART from "../dashboard/assets/executions_timeseries_chart.yaml?raw"
+    import {DEFAULT_DASHBOARD} from "../../stores/dashboard"
+    import type {ApiAsyncOperationResponse, BulkResponse, QueryFilter} from "@kestra-io/kestra-sdk"
+
+    const {t, te} = useI18n()
+    const toast = useToast()
+
+    const executionFilter = useExecutionFilter()
+    const flowExecutionFilter = useFlowExecutionFilter()
+
+    const props = withDefaults(defineProps<{
+        embed?: boolean;
+        filter?: boolean;
+        topbar?: boolean;
+        fitHeight?: boolean;
+        id?: string | null;
+        statuses?: string[];
+        isReadOnly?: boolean;
+        isConcurrency?: boolean;
+        visibleCharts?: boolean;
+        hidden?: string[] | null;
+        flowId?: string | undefined;
+        namespace?: string | undefined;
+        defaultScopeFilter?: boolean;
+        labels?: Record<string, string> | undefined;
+        title?: string | undefined;
+        noDataText?: string | undefined;
+        hideChart?: boolean;
+        columnsStorageKey?: string | undefined;
+        defaultColumns?: string[];
+        childFilter?: "MAIN" | "CHILD";
+    }>(), {
+        embed: false,
+        filter: true,
+        topbar: true,
+        fitHeight: undefined,
+        id: null,
+        statuses: () => [],
+        isReadOnly: false,
+        isConcurrency: false,
+        visibleCharts: false,
+        hidden: null,
+        flowId: undefined,
+        namespace: undefined,
+        defaultScopeFilter: false,
+        labels: undefined,
+        title: undefined,
+        noDataText: undefined,
+        hideChart: false,
+        columnsStorageKey: undefined,
+        defaultColumns: () => [],
+        childFilter: undefined,
+    })
+
+    const fitHeightResolved = computed(() => props.fitHeight ?? props.topbar)
+
+    const emit = defineEmits<{
+        "state-count": [payload: { runningCount: number; totalCount: number }];
+    }>()
+
+    const route = useRoute()
+    const router = useRouter()
+
+    const authStore = useAuthStore()
+    const flowStore = useFlowStore()
+    const miscStore = useMiscStore()
+    const executionsStore = useExecutionsStore()
+
+    const executionLabels = ref<Label[]>([])
+    const hasInvalidLabels = computed(() => hasInvalidLabelKeys(executionLabels.value))
+    const recomputeInterval = ref(false)
+    const isOpenLabelsModal = ref(false)
+    const isOpenReplayModal = ref(false)
+    const isOpenRestartModal = ref(false)
+    const selectedStatus = ref(undefined)
+    const lastRefreshDate = ref(new Date())
+    const unqueueDialogVisible = ref(false)
+    const changeStatusDialogVisible = ref(false)
+    const actionOptions = ref<Record<string, unknown>>({})
+    const dblClickRouteName = ref("executions/update")
+    const showChart = ref(localStorage.getItem(storageKeys.SHOW_CHART) !== "false")
+
+    const optionalColumns = ref([
+        {
+            label: t("state"),
+            prop: "state.current",
+            default: true,
+            description: t("filter.table_column.executions.state"),
+        },
+        {
+            label: t("flow"),
+            prop: "flowId",
+            default: true,
+            description: t("filter.table_column.executions.flow"),
+        },
+        {
+            label: t("namespace"),
+            prop: "namespace",
+            default: true,
+            description: t("filter.table_column.executions.namespace"),
+        },
+        {
+            label: t("start date"),
+            prop: "state.startDate",
+            default: true,
+            description: t("filter.table_column.executions.start-date"),
+        },
+        {
+            label: t("end date"),
+            prop: "state.endDate",
+            default: true,
+            description: t("filter.table_column.executions.end-date"),
+        },
+        {
+            label: t("duration"),
+            prop: "state.duration",
+            default: true,
+            description: t("filter.table_column.executions.duration"),
+        },
+        {
+            label: t("labels"),
+            prop: "labels",
+            default: true,
+            description: t("filter.table_column.executions.labels"),
+        },
+        {
+            label: t("revision"),
+            prop: "flowRevision",
+            default: false,
+            description: t("filter.table_column.executions.revision"),
+        },
+        {
+            label: t("inputs"),
+            prop: "inputs",
+            default: false,
+            description: t("filter.table_column.executions.inputs"),
+        },
+        {
+            label: t("task id"),
+            prop: "taskRunList.taskId",
+            default: false,
+            description: t("filter.table_column.executions.task-id"),
+        },
+        {
+            label: t("triggers"),
+            prop: "trigger",
+            default: true,
+            description: t("filter.table_column.executions.trigger"),
+        },
+        {
+            label: t("parent execution"),
+            prop: "trigger.variables.executionId",
+            default: false,
+            description: t("filter.table_column.executions.parent-execution"),
+        },
+    ])
+
+    const storageKey = computed(() =>
+        props.columnsStorageKey
+        ?? (routeFamily(route.name) === "flows/update"
+            ? storageKeys.DISPLAY_FLOW_EXECUTIONS_COLUMNS
+            : storageKeys.DISPLAY_EXECUTIONS_COLUMNS),
+    )
+
+    const allColumns = computed(() => [
+        ...optionalColumns.value,
+        ...getExtraColumns(route.name as string).map(col => ({...col, label: t(col.label)})),
+    ])
+
+    const {visibleColumns: displayColumns, orderedVisibleColumns, updateVisibleColumns: updateDisplayColumns} = useTableColumns({
+        columns: allColumns.value,
+        storageKey: storageKey.value,
+        initialVisibleColumns: props.defaultColumns,
+    })
+
+    const visibleColumns = computed(() =>
+        orderedVisibleColumns.value
+            .map(prop => allColumns.value.find(c => c.prop === prop))
+            .filter((c): c is NonNullable<typeof c> => {
+                const condition = (c as {condition?: () => boolean} | undefined)?.condition
+                return Boolean(c && (!condition || condition()))
+            }),
+    )
+
+    const isMobile = useIsMobile()
+
+    const mobileColumns = computed(() => {
+        const shown = new Set(["id", ...visibleColumns.value.map((column) => column.prop)])
+        const inFlow = routeFamily(route.name) === "flows/update"
+        const pick = (prop: string) => shown.has(prop) && !(inFlow && (prop === "flowId" || prop === "namespace")) ? prop : undefined
+        const title = pick("flowId") ?? "id"
+        return {
+            leading: pick("state.current"),
+            title,
+            titleAside: pick("state.startDate"),
+            meta: ["namespace", "id"].filter((prop) => prop !== title && pick(prop)),
+            metaAside: pick("state.duration"),
+        }
+    })
+
+    const onRowClick = (row: Execution, column: {type?: string} | undefined, event: Event) => {
+        if (isMobile.value && isPlainRowActivation(column, event)) router.push({name: dblClickRouteName.value, params: executionParams(row)})
+    }
+
+    const isColumnSortable = (prop: string) => {
+        if (prop in cellComponents) return false
+        return !["labels", "flowRevision", "inputs", "taskRunList.taskId", "trigger", "trigger.variables.executionId"].includes(prop)
+    }
+
+    const selectionMapper = (execution: Execution) => {
+        return execution.id
+    }
+
+    const {filterByState, navigateToStateFilter} = useStateFilter()
+
+    const onStateClick = (state?: string) => {
+        if (!state) return
+        if (!props.embed) {
+            filterByState(state)
+            return
+        }
+        const scope: Record<string, string> = {}
+        if (props.namespace) scope["filters[namespace][PREFIX]"] = props.namespace
+        if (props.flowId) scope["filters[flowId][EQUALS]"] = props.flowId
+        navigateToStateFilter(state, scope)
+    }
+
+    const ready = ref(false)
+    const dataTable = useTemplateRef<{
+        resetAndReload: () => void;
+        reload: () => void;
+        toggleAllUnselected: () => void;
+        selection?: string[];
+        queryBulkAction?: boolean;
+    }>("dataTable")
+    const chartDefaultDuration = computed(() => miscStore.configs?.chartDefaultDuration ?? FALLBACK_TIME_RANGE)
+
+    let hasAttemptedTimeRangeWiden = false
+
+    const loadData = async ({page, size, sort}: {page: number; size: number; sort?: string}) => {
+        if (!loadInit.value) return
+        lastRefreshDate.value = new Date()
+
+        const query = loadQuery({
+            size,
+            page,
+            sort: sort ?? String(route.query.sort ?? "state.startDate:desc"),
+            state: route.query?.state ? [route.query?.state] : props.statuses,
+        }) as Record<string, unknown>
+
+        await executionsStore.findExecutions(query)
+
+        const currentTimeRange = readTimeRangeFromQuery(query)
+        if (currentTimeRange && !hasAttemptedTimeRangeWiden) {
+            hasAttemptedTimeRangeWiden = true
+            const widened = await widenEmptyTimeRange({
+                currentTimeRange,
+                defaultTimeRange: chartDefaultDuration.value,
+                hasAbsoluteDateFilter: queryHasAbsoluteDateFilter(query),
+                alreadyAttempted: false,
+                hasUserFilters: queryHasUserFilters(query),
+                currentTotal: executionsStore.total ?? 0,
+                search: async (timeRange) => {
+                    await executionsStore.findExecutions(
+                        normalizeRouteTimeRangeFilter({...query, page: 1}, timeRange),
+                    )
+                    return executionsStore.total ?? 0
+                },
+            })
+            if (widened.widened && widened.timeRange) {
+                if (props.embed) {
+                    localPage.value = 1
+                }
+                await router.replace({
+                    ...route,
+                    query: {
+                        ...normalizeRouteTimeRangeFilter({...route.query}, widened.timeRange),
+                        page: "1",
+                    },
+                })
+            }
+        }
+
+        if (props.isConcurrency) {
+            emitStateCount()
+        }
+    }
+
+    const filterQueryKey = computed(() => {
+        const {page: _p, size: _s, sort: _so, ...filters} = route.query
+        const relevant = props.embed
+            ? Object.fromEntries(Object.entries(filters).filter(([key]) => key === "q" || FILTER_FIELD_PATTERN.test(key)))
+            : filters
+        return JSON.stringify(relevant)
+    })
+
+    const urlPage = computed(() => Number(route.query.page) || 1)
+    const urlSize = computed(() => Number(route.query.size) || 25)
+    const localPage = ref(1)
+    const localSize = ref(25)
+    const currentPage = computed(() => props.embed ? localPage.value : urlPage.value)
+    const currentSize = computed(() => props.embed ? localSize.value : urlSize.value)
+
+    const onPageChanged = ({page, size}: {page: number; size: number}) => {
+        if (props.embed) {
+            localPage.value = page
+            localSize.value = size
+        } else {
+            router.push({query: {...route.query, page: String(page), size: String(size)}})
+        }
+    }
+
+    watch(filterQueryKey, () => {
+        dataTable.value?.resetAndReload()
+    })
+
+    const routeInfo = computed(() => ({title: props.title ?? t("executions")}))
+    useRouteContext(routeInfo, props.embed)
+
+    const selection = computed(() => dataTable.value?.selection ?? [])
+    const queryBulkAction = computed(() => dataTable.value?.queryBulkAction ?? false)
+    const toggleAllUnselected = () => dataTable.value?.toggleAllUnselected()
+
+
+    const displayButtons = computed(() => {
+        return (routeFamily(route.name) === "flows/update") || (route.name === "executions/list")
+    })
+
+    const isAllowedOnExecutions = (executionAction: string) => props.namespace
+        ? authStore.user?.isAllowed(resource.EXECUTION, executionAction, props.namespace)
+        : authStore.user?.hasAnyActionOnAnyNamespace(resource.EXECUTION, executionAction)
+
+    const canRestart = computed(() => {
+        return isAllowedOnExecutions(action.RESTART)
+    })
+
+    const canReplay = computed(() => {
+        return isAllowedOnExecutions(action.REPLAY)
+    })
+
+    const canUpdate = computed(() => {
+        return isAllowedOnExecutions(action.UPDATE)
+    })
+
+    const canDelete = computed(() => {
+        return isAllowedOnExecutions(action.DELETE)
+    })
+
+    const canKill = computed(() => {
+        return isAllowedOnExecutions(action.KILL)
+    })
+
+    const canForceRun = computed(() => {
+        return isAllowedOnExecutions(action.FORCE_RUN)
+    })
+
+    const canUnqueue = computed(() => {
+        return isAllowedOnExecutions(action.UNQUEUE)
+    })
+
+    const canChangeLabels = computed(() => {
+        return isAllowedOnExecutions(action.CHANGE_LABELS)
+    })
+
+    const canPause = computed(() => {
+        return isAllowedOnExecutions(action.PAUSE)
+    })
+
+    const canResume = computed(() => {
+        return isAllowedOnExecutions(action.RESUME)
+    })
+
+    const canCheck = computed(() => {
+        return [
+            canDelete, canUpdate, canKill, canForceRun, canUnqueue,
+            canRestart, canReplay, canChangeLabels, canPause, canResume,
+        ].some(can => can.value)
+    })
+
+    const isAllowedEdit = computed(() => {
+        return authStore.user?.isAllowed(resource.FLOW, action.UPDATE, flowStore.flow?.namespace)
+    })
+
+    const hasAnyExecute = computed(() => {
+        return authStore.user?.hasAnyActionOnAnyNamespace(resource.FLOW, action.EXECUTE)
+    })
+
+    const isDisplayedTop = computed(() => props.filter || props.visibleCharts)
+
+    const states = computed(() => {
+        return [State.FAILED, State.SUCCESS, State.WARNING, State.CANCELLED].map(value => ({code: value}))
+    })
+
+    const unqueueStates = [State.RUNNING, State.CANCELLED, State.FAILED]
+
+    const bulkActionCount = computed(() => queryBulkAction.value ? executionsStore.total : selection.value.length)
+
+    const charts = computed(() => {
+        const chart = YAML_UTILS.parse<Chart>(YAML_CHART)
+        return chart ? [{...chart, content: YAML_CHART}] : []
+    })
+
+    const lockedFilters = computed<QueryFilter[]>(() =>
+        props.labels ? [{field: "labels", operation: "EQUALS", value: props.labels}] : [],
+    )
+
+    const executionParams = (row: Execution) => {
+        return {
+            namespace: row?.namespace,
+            flowId: row?.flowId,
+            id: row?.id,
+        }
+    }
+
+    const onShowChartChange = (value: boolean) => {
+        showChart.value = value
+        localStorage.setItem(storageKeys.SHOW_CHART, value.toString())
+    }
+
+    const showStatChart = () => {
+        return !props.hideChart && isDisplayedTop.value && showChart.value
+    }
+
+    const refresh = () => {
+        recomputeInterval.value = !recomputeInterval.value
+        dataTable.value?.reload()
+    }
+
+    const supportedFilterFields = computed<Set<string>>(() => {
+        const configuration = (props.namespace === undefined || props.flowId === undefined)
+            ? executionFilter.value
+            : flowExecutionFilter.value
+        const fields = (configuration.keys ?? []).flatMap((entry: {key: string}) =>
+            entry.key === "timeRange" ? ["timeRange", "startDate", "endDate"] : [entry.key],
+        )
+        if (configuration.searchPlaceholder) {
+            fields.push("q")
+        }
+        return new Set(fields)
+    })
+
+    const dropUnsupportedFilters = (query: Record<string, unknown>): Record<string, unknown> =>
+        keepSupportedFilters(query, supportedFilterFields.value)
+
+    const loadQuery = (base?: Record<string, unknown>) => {
+        const {page: _p, size: _s, sort: _so, ...restQuery} = route.query
+        let queryFilter: Record<string, unknown> = dropUnsupportedFilters(restQuery)
+
+        if (props.namespace) {
+            queryFilter["filters[namespace][PREFIX]"] = props.namespace
+        }
+
+        if (props.flowId) {
+            queryFilter["filters[flowId][EQUALS]"] = props.flowId
+        }
+
+        Object.entries(props.labels ?? {}).forEach(([key, value]) => {
+            queryFilter[`filters[labels][EQUALS][${key}]`] = value
+        })
+
+        if (props.childFilter) {
+            queryFilter["filters[childFilter][EQUALS]"] = props.childFilter
+        }
+
+        const hasStateFilters = Object.keys(queryFilter).some(key => key.startsWith("filters[state]")) || queryFilter.state
+        if (!hasStateFilters && props.statuses?.length > 0) {
+            queryFilter["filters[state][IN]"] = props.statuses.join(",")
+        }
+
+        return deepMerge(base, queryFilter)
+    }
+
+    const genericConfirmAction = (message: string, queryAction: string, byIdAction: string, success: string, showCancelButton = true) => {
+        toast.confirm(
+            t(message, {"executionCount": bulkActionCount.value}),
+            () => genericConfirmCallback(queryAction, byIdAction, success),
+            "warning",
+            showCancelButton,
+        )
+    }
+
+    const affectedCount = (response: ApiAsyncOperationResponse | BulkResponse) => {
+        if ("totalItems" in response) {
+            return response.totalItems ?? 0
+        }
+        if ("count" in response) {
+            return response.count ?? 0
+        }
+        return 0
+    }
+
+    type BulkActionFn = (options: Record<string, unknown>) => Promise<ApiAsyncOperationResponse | BulkResponse>
+
+    const genericConfirmCallback = (queryAction: string, byIdAction: string, success: string, params?: Record<string, unknown>) => {
+        const actionMap: Record<string, BulkActionFn> = {
+            "queryResumeExecution": executionsStore.queryResumeExecution as BulkActionFn,
+            "bulkResumeExecution": executionsStore.bulkResumeExecution as BulkActionFn,
+            "queryPauseExecution": executionsStore.queryPauseExecution as BulkActionFn,
+            "bulkPauseExecution": executionsStore.bulkPauseExecution as BulkActionFn,
+            "queryUnqueueExecution": executionsStore.queryUnqueueExecution as BulkActionFn,
+            "bulkUnqueueExecution": executionsStore.bulkUnqueueExecution as BulkActionFn,
+            "queryForceRunExecution": executionsStore.queryForceRunExecution as BulkActionFn,
+            "bulkForceRunExecution": executionsStore.bulkForceRunExecution as BulkActionFn,
+            "queryRestartExecution": executionsStore.queryRestartExecution as BulkActionFn,
+            "bulkRestartExecution": executionsStore.bulkRestartExecution as BulkActionFn,
+            "queryReplayExecution": executionsStore.queryReplayExecution as BulkActionFn,
+            "bulkReplayExecution": executionsStore.bulkReplayExecution as BulkActionFn,
+            "queryChangeExecutionStatus": executionsStore.queryChangeExecutionStatus as BulkActionFn,
+            "bulkChangeExecutionStatus": executionsStore.bulkChangeExecutionStatus as BulkActionFn,
+            "queryDeleteExecution": executionsStore.queryDeleteExecution as BulkActionFn,
+            "bulkDeleteExecution": executionsStore.bulkDeleteExecution as BulkActionFn,
+            "queryKill": executionsStore.queryKill as BulkActionFn,
+            "bulkKill": executionsStore.bulkKill as BulkActionFn,
+        }
+
+        if (queryBulkAction.value) {
+            const query = loadQuery({
+                sort: route.query.sort as string || "state.startDate:desc",
+                state: route.query.state ? [route.query.state] : props.statuses,
+            })
+            let options = {...query, ...actionOptions.value}
+            if (params) {
+                options = {...options, ...params}
+            }
+
+            const ac = actionMap[queryAction]
+            return ac(options)
+                .then((r) => {
+                    const count = affectedCount(r)
+                    toast.success(t(success, {executionCount: count}, count))
+                    toggleAllUnselected()
+                    dataTable.value?.reload()
+                })
+        } else {
+            const selectionData = {executionsId: selection.value}
+            let options = {...selectionData, ...actionOptions.value}
+            if (params) {
+                options = {...options, ...params}
+            }
+
+            const ac = actionMap[byIdAction]
+            return ac(options)
+                .then((r) => {
+                    const count = affectedCount(r)
+                    toast.success(t(success, {executionCount: count}, count))
+                    toggleAllUnselected()
+                    dataTable.value?.reload()
+                }).catch((e: unknown) => {
+                    const problem = asProblem(e)
+                    toast.error(
+                        problemBulkBody(problem, t, te),
+                        problemTitle(problem, t, te),
+                    )
+                })
+        }
+    }
+
+    const resumeExecutions = () => {
+        genericConfirmAction(
+            "bulk resume",
+            "queryResumeExecution",
+            "bulkResumeExecution",
+            "executions resumed",
+            false,
+        )
+    }
+
+    const pauseExecutions = () => {
+        genericConfirmAction(
+            "bulk pause",
+            "queryPauseExecution",
+            "bulkPauseExecution",
+            "executions paused",
+        )
+    }
+
+    const unqueueExecutions = () => {
+        unqueueDialogVisible.value = false
+        actionOptions.value.newStatus = selectedStatus.value
+
+        genericConfirmCallback(
+            "queryUnqueueExecution",
+            "bulkUnqueueExecution",
+            "executions unqueue",
+        )
+    }
+
+    const forceRunExecutions = () => {
+        genericConfirmAction(
+            "bulk force run",
+            "queryForceRunExecution",
+            "bulkForceRunExecution",
+            "executions force run",
+        )
+    }
+
+    const restartExecutions = () => {
+        isOpenRestartModal.value = false
+
+        genericConfirmCallback(
+            "queryRestartExecution",
+            "bulkRestartExecution",
+            "executions restarted",
+        )
+    }
+
+    const replayExecutions = (latestRevision: boolean) => {
+        isOpenReplayModal.value = false
+
+        genericConfirmCallback(
+            "queryReplayExecution",
+            "bulkReplayExecution",
+            "executions replayed",
+            {latestRevision: latestRevision},
+        )
+    }
+
+    const changeStatus = async () => {
+        changeStatusDialogVisible.value = false
+        actionOptions.value.newStatus = selectedStatus.value
+
+        await genericConfirmCallback(
+            "queryChangeExecutionStatus",
+            "bulkChangeExecutionStatus",
+            "executions state changed",
+        )
+        window.setTimeout(() => dataTable.value?.reload(), 100)
+    }
+
+
+    const {confirmExecutionDeletion} = useExecutionDeletionDialog()
+
+    const deleteExecutions = async () => {
+        const count = bulkActionCount.value
+        const options = await confirmExecutionDeletion(t("bulk delete", {"executionCount": count}), {offerNonTerminated: true})
+        if (!options) return
+
+        Object.assign(actionOptions.value, options)
+        genericConfirmCallback(
+            "queryDeleteExecution",
+            "bulkDeleteExecution",
+            "executions deleted",
+        )
+    }
+
+    const killExecutions = () => {
+        genericConfirmAction(
+            "bulk kill",
+            "queryKill",
+            "bulkKill",
+            "executions killed",
+        )
+    }
+
+    const onSetLabelsError = (e: unknown) => {
+        const problem = asProblem(e)
+        toast.error(
+            problemBulkBody(problem, t, te),
+            problemTitle(problem, t, te),
+        )
+    }
+
+    const setLabels = () => {
+        const filtered = filterValidLabels(executionLabels.value)
+
+        if (filtered.error) {
+            toast.error(t("wrong labels"), t("error"))
+            return
+        }
+
+        if (hasInvalidLabelKeys(filtered.labels)) {
+            toast.error(t("invalid label key"), t("error"))
+            return
+        }
+
+        KsMessageBox.confirm(
+            t("bulk set labels", {"executionCount": bulkActionCount.value}),
+            t("confirmation"),
+            {dangerouslyUseHTMLString: true},
+        ).then(() => {
+            if (queryBulkAction.value) {
+                return executionsStore
+                    .querySetLabels({
+                        params: loadQuery({
+                            sort: route.query.sort as string || "state.startDate:desc",
+                            state: route.query.state ? [route.query.state] : props.statuses,
+                        }),
+                        data: filtered.labels,
+                    })
+                    .then((r) => {
+                        toast.success(t("Set labels done", {executionCount: affectedCount(r)}))
+                        toggleAllUnselected()
+                        dataTable.value?.reload()
+                    }).catch(onSetLabelsError)
+            } else {
+                return executionsStore
+                    .bulkSetLabels({
+                        executionsId: selection.value,
+                        executionLabels: filtered.labels,
+                    })
+                    .then((r) => {
+                        toast.success(t("Set labels done", {executionCount: affectedCount(r)}))
+                        toggleAllUnselected()
+                        dataTable.value?.reload()
+                    }).catch(onSetLabelsError)
+            }
+        },
+        )
+        isOpenLabelsModal.value = false
+    }
+
+    const editFlow = () => {
+        router.push({
+            name: "flows/update/edit",
+            params: {
+                namespace: flowStore.flow?.namespace,
+                id: flowStore.flow?.id,
+                tenant: route.params?.tenant,
+            },
+        })
+    }
+
+    const emitStateCount = () => {
+        const runningCount = executionsStore.executions?.filter(execution =>
+            execution?.state?.current === State.RUNNING,
+        )?.length ?? 0
+        const totalCount = executionsStore.total
+        emit("state-count", {runningCount, totalCount})
+    }
+
+    watch(isOpenLabelsModal, (opening) => {
+        if (opening) {
+            executionLabels.value = []
+        }
+    })
+
+    async function exportExecutionsAsStream() {
+        await executionsStore.exportExecutionsAsCSV(
+            dropUnsupportedFilters(route.query),
+        )
+    }
+</script>
+
+<style scoped>
+.stat-charts {
+    margin-bottom: var(--ks-spacing-5);
+}
+
+.inputs-preview {
+    margin-bottom: 0;
+}
+
+.inputs-icon {
+    font-size: var(--ks-font-size-xl);
+}
+
+.status-indicator {
+    margin-inline-end: var(--ks-spacing-1);
+}
+
+.full-container {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    & > * {
+        flex: 1;
+    }
+}
+
+.shadow {
+    box-shadow: 0px 2px 4px 0px var(--ks-shadow-element) !important;
+}
+
+.custom-warning {
+    border: 1px solid var(--ks-status-warning);
+    border-radius: 7px;
+    box-shadow: 1px 1px 3px 1px var(--ks-status-warning);
+
+    & :deep(.kel-alert__title) {
+        font-size: var(--ks-font-size-base);
+        color: var(--ks-status-warning);
+        font-weight: bold;
+    }
+
+    & :deep(.kel-alert__description) {
+        font-size: var(--ks-font-size-xs);
+    }
+
+    & :deep(.kel-alert__icon) {
+        color: var(--ks-status-warning);
+    }
+}
+
+.code-text {
+    color: var(--ks-text-primary);
+}
+
+:deep(.executions-table) .kel-table__row {
+    cursor: pointer;
+}
+
+:deep(a.execution-id) code {
+    color: var(--ks-text-link);
+}
+</style>

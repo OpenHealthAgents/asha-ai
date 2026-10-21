@@ -1,0 +1,48 @@
+{
+  "name": "@medplum/graphiql",
+  "version": "5.2.7",
+  "description": "Medplum GraphiQL",
+  "homepage": "https://www.medplum.com/",
+  "bugs": {
+    "url": "https://github.com/medplum/medplum/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/medplum/medplum.git",
+    "directory": "packages/graphiql"
+  },
+  "license": "Apache-2.0",
+  "author": "Medplum <hello@medplum.com>",
+  "type": "module",
+  "scripts": {
+    "build": "npm run clean && tsc && vite build",
+    "clean": "rimraf dist",
+    "dev": "vite",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "devDependencies": {
+    "@graphiql/react": "0.39.1",
+    "@graphiql/toolkit": "0.12.1",
+    "@mantine/core": "8.3.18",
+    "@mantine/hooks": "8.3.18",
+    "@mantine/spotlight": "8.3.18",
+    "@medplum/core": "5.2.7",
+    "@medplum/fhirtypes": "5.2.7",
+    "@medplum/react": "5.2.7",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "graphiql": "5.4.0",
+    "graphql": "17.0.2",
+    "graphql-ws": "6.4.1",
+    "postcss": "8.5.30",
+    "postcss-preset-mantine": "1.18.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "vite": "8.3.4",
+    "vite-plugin-monaco-editor-esm": "2.0.3"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.2.0"
+  }
+}

@@ -1,0 +1,390 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import type { TypedValue, WithId } from '@medplum/core';
+import {
+  AccessPolicyInteraction,
+  allOk,
+  append,
+  badRequest,
+  EMPTY,
+  forbidden,
+  OperationOutcomeError,
+} from '@medplum/core';
+import type { FhirRequest, FhirResponse } from '@medplum/fhir-router';
+import type {
+  Coding,
+  ConceptMap,
+  ConceptMapGroup,
+  ConceptMapGroupElement,
+  ConceptMapGroupElementTarget,
+  ConceptMapGroupElementTargetDependsOn,
+} from '@medplum/fhirtypes';
+import { getAuthenticatedContext } from '../../context';
+import { repoAccess } from '../repository/access-tracker';
+import type { PgQueryable } from '../sql';
+import { InsertQuery, SelectQuery, Union } from '../sql';
+import { makeOperationDefinition } from './definitions';
+import { parseInputParameters } from './utils/parameters';
+import { findTerminologyResource } from './utils/terminology';
+
+const operation = makeOperationDefinition(
+  { scope: 'type-and-instance', resource: 'ConceptMap' },
+  {
+    name: 'conceptmap-import',
+    code: 'import',
+    affectsState: true,
+    parameter: [
+      { use: 'in', name: 'url', type: 'uri', min: 0, max: '1' },
+      {
+        use: 'in',
+        name: 'mapping',
+        min: 1,
+        max: '*',
+        part: [
+          { use: 'in', name: 'source', type: 'Coding', min: 1, max: '1' },
+          // `target.system` is required; leave `target.code` empty for null map
+          { use: 'in', name: 'target', type: 'Coding', min: 1, max: '1' },
+          // Default value of relationship is `equivalent`, to reduce overhead
+          {
+            use: 'in',
+            name: 'relationship',
+            type: 'code',
+            min: 0,
+            max: '1',
+            binding: {
+              strength: 'required',
+              valueSet: 'http://hl7.org/fhir/ValueSet/concept-map-equivalence',
+            },
+          },
+          { use: 'in', name: 'comment', type: 'string', min: 0, max: '1' },
+          {
+            use: 'in',
+            name: 'property',
+            min: 0,
+            max: '*',
+            part: [
+              { use: 'in', name: 'code', type: 'code', min: 1, max: '1' },
+              { use: 'in', name: 'value', type: 'Any', min: 1, max: '1' },
+            ],
+          },
+          {
+            use: 'in',
+            name: 'dependsOn',
+            min: 0,
+            max: '*',
+            part: [
+              { use: 'in', name: 'code', type: 'code', min: 1, max: '1' },
+              { use: 'in', name: 'value', type: 'Any', min: 0, max: '1' },
+            ],
+          },
+          {
+            use: 'in',
+            name: 'product',
+            min: 0,
+            max: '*',
+            part: [
+              { use: 'in', name: 'code', type: 'code', min: 1, max: '1' },
+              { use: 'in', name: 'value', type: 'Any', min: 0, max: '1' },
+            ],
+          },
+        ],
+      },
+      { use: 'out', name: 'return', type: 'ConceptMap', min: 1, max: '1' },
+    ],
+  }
+);
+
+export type ConceptMapImportParameters = {
+  url?: string;
+  mapping: ConceptMapping[];
+};
+
+export type ConceptMapping = {
+  source: Coding;
+  target: Coding;
+  relationship?: string;
+  comment?: string;
+  property?: MappingAttribute[];
+  dependsOn?: MappingAttribute[];
+  product?: MappingAttribute[];
+};
+
+export type MappingAttribute = {
+  code: string;
+  value?: TypedValue;
+};
+
+export async function conceptMapImportHandler(req: FhirRequest): Promise<FhirResponse> {
+  const repo = getAuthenticatedContext().repo;
+  const isSuperAdmin = repo.isSuperAdmin();
+  if (!repo.isProjectAdmin() && !isSuperAdmin) {
+    return [forbidden];
+  }
+
+  const params = parseInputParameters<ConceptMapImportParameters>(operation, req);
+
+  let conceptMap: WithId<ConceptMap>;
+  if (req.params.id && params.url) {
+    return [badRequest('Parameter `url` not permitted for instance operation', 'Parameters.parameter')];
+  } else if (req.params.id) {
+    conceptMap = await repo.readResource('ConceptMap', req.params.id);
+  } else if (params.url) {
+    conceptMap = await findTerminologyResource(repo, 'ConceptMap', params.url, { ownProjectOnly: !isSuperAdmin });
+  } else {
+    return [badRequest('ConceptMap to import into must be specified', `Parameters.parameter.where(name = 'url')`)];
+  }
+
+  if (!repo.canPerformInteraction(AccessPolicyInteraction.UPDATE, conceptMap)) {
+    return [forbidden];
+  }
+
+  await repo.withTransaction(
+    async (txRepo) => {
+      // `importConceptMap` operates only on ConceptMap derivative tables
+      const db = txRepo.getDatabaseClient(
+        repoAccess.sqlWrite('ConceptMap', { source: 'conceptMapImportHandler.client' })
+      );
+      await importConceptMappings(db, conceptMap, params.mapping);
+    },
+    { resourceTypes: ['ConceptMap'], source: 'conceptMapImportHandler' }
+  );
+  return [allOk, conceptMap];
+}
+
+export async function importConceptMapResource(db: PgQueryable, conceptMap: WithId<ConceptMap>): Promise<void> {
+  const resourceMappings = gatherResourceMappings(conceptMap);
+  await importConceptMappings(db, conceptMap, resourceMappings);
+}
+
+export async function importConceptMappings(
+  db: PgQueryable,
+  conceptMap: WithId<ConceptMap>,
+  mappings: readonly ConceptMapping[] = EMPTY
+): Promise<void> {
+  const mappingRows: MappingRow[] = [];
+  const attributeRows: (Omit<AttributeRow, 'mapping'>[] | undefined)[] = [];
+  for (const mapping of mappings) {
+    addRowsForMapping(mapping, conceptMap, mappingRows, attributeRows);
+  }
+
+  const hydratedMappings = await prepareMappingRows(db, mappingRows);
+  await writeMappingRows(db, hydratedMappings, attributeRows);
+}
+
+function gatherResourceMappings(conceptMap: WithId<ConceptMap>): ConceptMapping[] {
+  const mappings: ConceptMapping[] = [];
+  for (const group of conceptMap.group ?? EMPTY) {
+    for (const element of group.element ?? EMPTY) {
+      if (!element.code) {
+        continue;
+      }
+      for (const target of element.target ?? EMPTY) {
+        const entry = buildMappingEntry(group, element, target);
+        mappings.push(entry);
+      }
+    }
+  }
+  return mappings;
+}
+
+function buildMappingEntry(
+  group: ConceptMapGroup,
+  element: ConceptMapGroupElement,
+  target: ConceptMapGroupElementTarget
+): ConceptMapping {
+  const entry: ConceptMapping = {
+    source: { system: group.source, code: element.code, display: element.display },
+    target: { system: group.target, code: target.code, display: target.display },
+    relationship: target.equivalence,
+    comment: target.comment,
+  };
+
+  for (const dependency of target.dependsOn ?? EMPTY) {
+    const value = getAttributeValue(dependency);
+    entry.dependsOn = append(entry.dependsOn, { code: dependency.property, value });
+  }
+  for (const product of target.product ?? EMPTY) {
+    const value = getAttributeValue(product);
+    entry.product = append(entry.product, { code: product.property, value });
+  }
+  return entry;
+}
+
+function getAttributeValue(attr: ConceptMapGroupElementTargetDependsOn): TypedValue {
+  if (attr.system) {
+    return {
+      type: 'Coding',
+      value: { system: attr.system, code: attr.value, display: attr.display },
+    };
+  } else if (attr.display) {
+    return {
+      type: 'Coding',
+      value: { code: attr.value, display: attr.display },
+    };
+  } else {
+    return { type: 'code', value: attr.value };
+  }
+}
+
+type MappingRow = {
+  conceptMap: string;
+  sourceSystem: string | number; // System string normalized by reference to CodingSystem.id
+  sourceCode: string;
+  sourceDisplay?: string;
+  targetSystem: string | number; // System string normalized by reference to CodingSystem.id
+  targetCode: string;
+  targetDisplay?: string;
+  relationship?: string;
+  comment?: string;
+};
+type AttributeRow = {
+  mapping: string;
+  kind: 'property' | 'dependsOn' | 'product';
+  uri: string;
+  type?: string;
+  value?: string;
+};
+
+/**
+ * Transforms a logical concept mapping into the database row(s) that represent it,
+ * which may be spread across the `ConceptMapping` and `ConceptMapping_Attribute` tables.
+ * @param mapping - The mapping to transform.
+ * @param conceptMap - The related ConceptMap resource for the mapping.
+ * @param mappingRows - The accumulated `ConceptMapping` rows for this import.
+ * @param attributeRows - The accumulated `ConceptMapping_Attribute` rows for this import.
+ */
+function addRowsForMapping(
+  mapping: ConceptMapping,
+  conceptMap: WithId<ConceptMap>,
+  mappingRows: MappingRow[],
+  attributeRows: (Omit<AttributeRow, 'mapping'>[] | undefined)[]
+): void {
+  if (!mapping.source.code) {
+    throw new OperationOutcomeError(badRequest('Source code for mapping is required'));
+  }
+
+  mappingRows.push({
+    conceptMap: conceptMap.id,
+    sourceSystem: mapping.source.system ?? '',
+    sourceCode: mapping.source.code,
+    sourceDisplay: mapping.source.display,
+    targetSystem: mapping.target.system ?? '',
+    targetCode: mapping.target.code ?? '',
+    targetDisplay: mapping.target.display,
+    relationship: mapping.relationship === 'equivalent' ? undefined : mapping.relationship,
+    comment: mapping.comment,
+  });
+
+  let mappingAttributes: Omit<AttributeRow, 'mapping'>[] | undefined;
+  for (const property of mapping.property ?? EMPTY) {
+    mappingAttributes = append(mappingAttributes, {
+      kind: 'property',
+      uri: property.code,
+      type: property.value?.type,
+      value: JSON.stringify(property.value?.value),
+    });
+  }
+  for (const dependency of mapping.dependsOn ?? EMPTY) {
+    mappingAttributes = append(mappingAttributes, {
+      kind: 'dependsOn',
+      uri: dependency.code,
+      type: dependency.value?.type,
+      value: JSON.stringify(dependency.value?.value),
+    });
+  }
+  for (const product of mapping.product ?? EMPTY) {
+    mappingAttributes = append(mappingAttributes, {
+      kind: 'product',
+      uri: product.code,
+      type: product.value?.type,
+      value: JSON.stringify(product.value?.value),
+    });
+  }
+  attributeRows.push(mappingAttributes);
+}
+
+/**
+ * Prepares `ConceptMapping` rows for insertion into the DB by hydrating their references
+ * with the the correct database IDs of the interned system URL strings for the source/target codes.
+ * @param db - Database connection.
+ * @param rows - Mapping rows to hydrate.
+ * @returns The hydrated mapping rows, ready for insertion into the DB.
+ */
+async function prepareMappingRows(
+  db: PgQueryable,
+  rows: MappingRow[]
+): Promise<(MappingRow & { sourceSystem: number; targetSystem: number })[]> {
+  if (!rows.length) {
+    return rows as Awaited<ReturnType<typeof prepareMappingRows>>;
+  }
+
+  const systems = new Set<string>();
+  for (const row of rows) {
+    systems.add(row.sourceSystem as string);
+    systems.add(row.targetSystem as string);
+  }
+
+  const systemStrings = Array.from(systems.values());
+  const insertCTE = new InsertQuery(
+    'CodingSystem',
+    systemStrings.map((system) => ({ system }))
+  )
+    .ignoreOnConflict()
+    .returnColumn('id')
+    .returnColumn('system');
+
+  const insertedQuery = new SelectQuery('i').column('id').column('system').withCte('i', insertCTE);
+  const existingQuery = new SelectQuery('CodingSystem')
+    .column('id')
+    .column('system')
+    .where('system', 'IN', systemStrings);
+  const systemResults = await new Union(insertedQuery, existingQuery).execute(db);
+
+  if (systemResults.length !== systemStrings.length) {
+    throw new Error('Failed to resolve IDs for system strings');
+  }
+
+  const systemIds: Record<string, number> = Object.create(null);
+  for (let i = 0; i < systemStrings.length; i++) {
+    const { id, system } = systemResults[i];
+    systemIds[system] = Number.parseInt(id, 10);
+  }
+
+  for (const mapping of rows) {
+    mapping.sourceSystem = systemIds[mapping.sourceSystem];
+    mapping.targetSystem = systemIds[mapping.targetSystem];
+  }
+  return rows as (MappingRow & { sourceSystem: number; targetSystem: number })[];
+}
+
+/**
+ * Writes mapping and attribute rows to the database, maintaining
+ * referential integrity between a row and its associated attributes.
+ * @param db - Database connection.
+ * @param mappings - Mapping rows to insert.
+ * @param attributes - Attribute rows to insert.
+ */
+async function writeMappingRows(
+  db: PgQueryable,
+  mappings: MappingRow[],
+  attributes: (Omit<AttributeRow, 'mapping'>[] | undefined)[]
+): Promise<void> {
+  if (mappings.length) {
+    const insertMappings = new InsertQuery('ConceptMapping', mappings).returnColumn('id');
+    const mappingIds = await insertMappings.execute(db);
+
+    const attributeRows: AttributeRow[] = [];
+    for (let i = 0; i < mappings.length; i++) {
+      const mappingId = mappingIds[i].id;
+      for (const attribute of attributes[i] ?? EMPTY) {
+        const row = attribute as AttributeRow;
+        row.mapping = mappingId;
+        attributeRows.push(row);
+      }
+    }
+    if (attributeRows.length) {
+      const insertAttributes = new InsertQuery('ConceptMapping_Attribute', attributeRows).ignoreOnConflict();
+      await insertAttributes.execute(db);
+    }
+  }
+}

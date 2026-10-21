@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Agent</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0f172a;
+            color: white;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 900px;
+            max-width: 95%;
+        }
+
+        .card {
+            background: #1e293b;
+            padding: 30px;
+            border-radius: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .context-row {
+            margin-bottom: 25px;
+        }
+
+        .context-row label {
+            display: block;
+            margin-bottom: 8px;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+
+        .context-row input {
+            width: 100%;
+            padding: 12px 15px;
+            border-radius: 10px;
+            border: 1px solid #475569;
+            background: #0f172a;
+            color: white;
+            font-size: 15px;
+        }
+
+        .context-row input::placeholder {
+            color: #64748b;
+        }
+
+        button {
+            border: none;
+            padding: 12px 25px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .start {
+            background: #22c55e;
+            color: white;
+        }
+
+        .stop {
+            background: #ef4444;
+            color: white;
+        }
+
+        .box {
+            background: #334155;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .box h3 {
+            margin-bottom: 10px;
+        }
+
+        .content {
+            min-height: 80px;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .mic {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            margin: 20px auto;
+            background: #475569;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 50px;
+        }
+
+        .recording {
+            background: #ef4444;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.1);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="card">
+            <h1>🎤 AI Voice Agent</h1>
+
+            <div class="status">
+                Status: <span id="status">Disconnected</span>
+            </div>
+
+            <div class="mic" id="mic">🎙️</div>
+
+            <div class="context-row">
+                <label for="patientContext">Patient context (optional — sent as the <code>patient_context</code> query
+                    param)</label>
+                <input id="patientContext" type="text" placeholder="name = Jane Doe, age = 34" />
+            </div>
+
+            <div class="controls">
+                <button class="start" onclick="startVoice()">Start</button>
+                <button class="stop" onclick="stopVoice()">Stop</button>
+            </div>
+
+            <div class="box">
+                <h3>User Transcript</h3>
+                <div id="transcript" class="content"></div>
+            </div>
+
+            <div class="box">
+                <h3>Assistant Response</h3>
+                <div id="assistant" class="content"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let ws = null;
+        let audioContext = null;
+        let processor = null;
+        let source = null;
+        let mediaStream = null;
+        let conversationEnded = false;
+
+        // 🌟 New streaming audio engine variables
+        let playbackContext = null;
+        let nextStartTime = 0;
+
+        const statusEl = document.getElementById("status");
+        const transcriptEl = document.getElementById("transcript");
+        const assistantEl = document.getElementById("assistant");
+        const micEl = document.getElementById("mic");
+
+        function endConversation() {
+            if (conversationEnded) return;
+            conversationEnded = true;
+            statusEl.innerText = "Conversation ended";
+            micEl.classList.remove("recording");
+            if (processor) processor.disconnect();
+            if (source) source.disconnect();
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext && audioContext.state !== "closed") {
+                audioContext.close();
+            }
+        }
+
+        async function startVoice() {
+            if (ws) return;
+
+            assistantEl.innerHTML = "";
+            transcriptEl.innerHTML = "";
+            nextStartTime = 0;
+            conversationEnded = false;
+
+            // Create playback context for incoming audio stream
+            playbackContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+
+            const token = "eyJhbGciOiJFZERTQSIsImtpZCI6InZlcnlNMnFSTFRRMWlFSWp4ajdiVE9Sejg2VFdJSUhVIn0.eyJpYXQiOjE3OTExMDAzOTEsIm5hbWUiOiJQYXRpZW50MSIsImVtYWlsIjoicGF0aWVudDFAZ21haWwuY29tIiwiZW1haWxWZXJpZmllZCI6ZmFsc2UsImltYWdlIjpudWxsLCJjcmVhdGVkQXQiOiIyMDI2LTA1LTA3VDEzOjI5OjEwLjI5MloiLCJ1cGRhdGVkQXQiOiIyMDI2LTA1LTA3VDEzOjI5OjEwLjI5MloiLCJ1c2VybmFtZSI6InBhdGllbnQxIiwiZGlzcGxheVVzZXJuYW1lIjoicGF0aWVudDEiLCJ0d29GYWN0b3JFbmFibGVkIjpmYWxzZSwicm9sZSI6Imd1ZXN0IiwiYmFubmVkIjpmYWxzZSwiYmFuUmVhc29uIjpudWxsLCJiYW5FeHBpcmVzIjpudWxsLCJpZCI6InpEUVpmS2pWZXNoMTVpOFlYeTlFV21VWlU0OXdxZHQ2IiwiYWN0aXZlT3JnYW5pemF0aW9uSWQiOiIwZmI0MWU1MC04MmE0LTQ2MWUtOTZjNy1iZDExMzU5ZDg5MmQiLCJhY3RpdmVUZWFtSWQiOm51bGwsImFwcHMiOlt7ImlkIjoiY21vdmZkMXFwMDAwMDQ1dDc3ZXJoMjhkNiIsIm5hbWUiOiJUZWxlbWVkaWNpbmUiLCJzbHVnIjoidGVsZW1lZGljaW5lIiwibWVudXMiOlt7ImlkIjoiY21vdmZkMXU3MDAwMTQ1dDdyM3VhMDRzdyIsImxhYmVsIjoiUEFUSUVOVCIsInNsdWciOiJwYXRpZW50IiwiaWNvbiI6bnVsbCwiaHJlZiI6bnVsbCwidHlwZSI6IkdST1VQIiwicGVybWlzc2lvbktleXMiOltdLCJjaGlsZHJlbiI6W3siaWQiOiJjbW92ZmQxdmIwMDAyNDV0N216NTk3Z3NqIiwibGFiZWwiOiJEYXNoYm9hcmQiLCJzbHVnIjoicGF0aWVudC1kYXNoYm9hcmQiLCJpY29uIjoibGF5b3V0LWRhc2hib2FyZCIsImhyZWYiOiIvYmV6cy90ZWxlbWVkaWNpbmUvcGF0aWVudCIsInR5cGUiOiJJVEVNIiwicGVybWlzc2lvbktleXMiOlsicGF0aWVudC1kYXNoYm9hcmQ6cmVhZCJdLCJjaGlsZHJlbiI6W119LHsiaWQiOiJkZmU0YmI0MC05OWRmLTQ0OTktYTExNC02Y2JiMzczNmI5YWMiLCJsYWJlbCI6Ik1lZGljYWwgUmVjb3JkcyIsInNsdWciOiJtZWRpY2FsLXJlY29yZHMiLCJpY29uIjoiZm9sZGVyLWhlYXJ0IiwiaHJlZiI6Ii9iZXpzL3RlbGVtZWRpY2luZS9wYXRpZW50L21lZGljYWwtcmVjb3JkcyIsInR5cGUiOiJJVEVNIiwicGVybWlzc2lvbktleXMiOlsicGF0aWVudC1jbGluaWNhbC1yZWNvcmRzOnJlYWQiXSwiY2hpbGRyZW4iOltdfSx7ImlkIjoiY21vdmZkMXdmMDAwNDQ1dDdrcGUyMzhxYyIsImxhYmVsIjoiQXBwb2ludG1lbnRzIiwic2x1ZyI6InBhdGllbnQtYXBwb2ludG1lbnRzLWdyb3VwIiwiaWNvbiI6ImNhbGVuZGFyIiwiaHJlZiI6bnVsbCwidHlwZSI6IkdST1VQIiwicGVybWlzc2lvbktleXMiOltdLCJjaGlsZHJlbiI6W3siaWQiOiJjbW92ZmQxd3cwMDA1NDV0NzZtZzEyczNoIiwibGFiZWwiOiJBbGwgQXBwb2ludG1lbnRzIiwic2x1ZyI6InBhdGllbnQtYXBwb2ludG1lbnRzIiwiaWNvbiI6ImNhbGVuZGFyLWNsb2NrIiwiaHJlZiI6Ii9iZXpzL3RlbGVtZWRpY2luZS9wYXRpZW50L2FwcG9pbnRtZW50cyIsInR5cGUiOiJJVEVNIiwicGVybWlzc2lvbktleXMiOlsicGF0aWVudC1hcHBvaW50bWVudHM6cmVhZCJdLCJjaGlsZHJlbiI6W119LHsiaWQiOiJjbW92ZmQxeGgwMDA2NDV0N3poa2liNGNtIiwibGFiZWwiOiJCb29rIEFwcG9pbnRtZW50Iiwic2x1ZyI6InBhdGllbnQtYm9vay1hcHBvaW50bWVudCIsImljb24iOiJjYWxlbmRhci1wbHVzIiwiaHJlZiI6Ii9iZXpzL3RlbGVtZWRpY2luZS9wYXRpZW50L2FwcG9pbnRtZW50cy9ib29rIiwidHlwZSI6IklURU0iLCJwZXJtaXNzaW9uS2V5cyI6WyJwYXRpZW50LWJvb2stYXBwb2ludG1lbnQ6cmVhZCJdLCJjaGlsZHJlbiI6W119XX0seyJpZCI6ImNtb3ZmZDF2bzAwMDM0NXQ3dThiZ2cwdW0iLCJsYWJlbCI6IlByb2ZpbGUiLCJzbHVnIjoicGF0aWVudC1wcm9maWxlIiwiaWNvbiI6InVzZXItY29nIiwiaHJlZiI6Ii9iZXpzL3RlbGVtZWRpY2luZS9wYXRpZW50L3Byb2ZpbGUiLCJ0eXBlIjoiSVRFTSIsInBlcm1pc3Npb25LZXlzIjpbInBhdGllbnQtcHJvZmlsZTpyZWFkIl0sImNoaWxkcmVuIjpbXX0seyJpZCI6ImNtb3ZmZDF4dzAwMDc0NXQ3bzMxdmZhdG0iLCJsYWJlbCI6IkludGFrZSIsInNsdWciOiJpbnRha2UiLCJpY29uIjoiY2xpcGJvYXJkLWxpc3QiLCJocmVmIjpudWxsLCJ0eXBlIjoiR1JPVVAiLCJwZXJtaXNzaW9uS2V5cyI6W10sImNoaWxkcmVuIjpbeyJpZCI6ImNtb3ZmZDF5ZjAwMDg0NXQ3ZnU0Y2c2Y2oiLCJsYWJlbCI6IlZvaWNlIiwic2x1ZyI6InZvaWNlLWludGFrZSIsImljb24iOiJtaWMiLCJocmVmIjoiL2JlenMvdGVsZW1lZGljaW5lL3BhdGllbnQvYXBwb2ludG1lbnRzL2ludGFrZSIsInR5cGUiOiJJVEVNIiwicGVybWlzc2lvbktleXMiOlsicGF0aWVudC1pbnRha2Utdm9pY2U6cmVhZCJdLCJjaGlsZHJlbiI6W119LHsiaWQiOiJjbW92ZmQxeXUwMDA5NDV0NzV5M2NiOGNnIiwibGFiZWwiOiJDaGF0Iiwic2x1ZyI6ImNoYXQtaW50YWtlIiwiaWNvbiI6Im1lc3NhZ2Utc3F1YXJlIiwiaHJlZiI6Ii9iZXpzL3RlbGVtZWRpY2luZS9wYXRpZW50L2ludGFrZSIsInR5cGUiOiJJVEVNIiwicGVybWlzc2lvbktleXMiOlsicGF0aWVudC1pbnRha2UtY2hhdDpyZWFkIl0sImNoaWxkcmVuIjpbXX1dfSx7ImlkIjoiY21vdmZkMXpiMDAwYTQ1dDdzZXg5Z28xeSIsImxhYmVsIjoiQXNrIEFJIiwic2x1ZyI6ImFzay1haSIsImljb24iOiJzdGV0aG9zY29wZSIsImhyZWYiOm51bGwsInR5cGUiOiJHUk9VUCIsInBlcm1pc3Npb25LZXlzIjpbXSwiY2hpbGRyZW4iOlt7ImlkIjoiY21vdmZkMXp0MDAwYjQ1dDcwZTNzYTV6bSIsImxhYmVsIjoiVm9pY2UiLCJzbHVnIjoidm9pY2UtYXNrYWkiLCJpY29uIjoicGhvbmUiLCJocmVmIjoiL2JlenMvdGVsZW1lZGljaW5lL3BhdGllbnQvY29uc3VsdGF0aW9uL3ZvaWNlIiwidHlwZSI6IklURU0iLCJwZXJtaXNzaW9uS2V5cyI6WyJwYXRpZW50LWFpLWNvbnN1bHRhdGlvbi12b2ljZTpyZWFkIl0sImNoaWxkcmVuIjpbXX0seyJpZCI6ImNtb3ZmZDIwNjAwMGM0NXQ3ODd0ZjdvZDEiLCJsYWJlbCI6IkNoYXQiLCJzbHVnIjoiY2hhdC1hc2thaSIsImljb24iOiJtZXNzYWdlLWNpcmNsZSIsImhyZWYiOiIvYmV6cy90ZWxlbWVkaWNpbmUvcGF0aWVudC9jb25zdWx0YXRpb24vY2hhdCIsInR5cGUiOiJJVEVNIiwicGVybWlzc2lvbktleXMiOlsicGF0aWVudC1haS1jb25zdWx0YXRpb24tY2hhdDpyZWFkIl0sImNoaWxkcmVuIjpbXX1dfV19XX1dLCJwZXJtaXNzaW9ucyI6WyJwYXRpZW50LWRhc2hib2FyZDpyZWFkIiwicGF0aWVudC1wcm9maWxlOnJlYWQiLCJwYXRpZW50LWFwcG9pbnRtZW50czpyZWFkIiwicGF0aWVudC1ib29rLWFwcG9pbnRtZW50OnJlYWQiLCJwYXRpZW50LWludGFrZS12b2ljZTpyZWFkIiwicGF0aWVudC1pbnRha2UtY2hhdDpyZWFkIiwicGF0aWVudC1haS1jb25zdWx0YXRpb24tdm9pY2U6cmVhZCIsInBhdGllbnQtYWktY29uc3VsdGF0aW9uLWNoYXQ6cmVhZCIsInBhdGllbnQ6Y3JlYXRlIiwicGF0aWVudDpyZWFkIiwicGF0aWVudDp1cGRhdGUiLCJwYXRpZW50OmRlbGV0ZSIsImFwcG9pbnRtZW50OmNyZWF0ZSIsImFwcG9pbnRtZW50OnJlYWQiLCJhcHBvaW50bWVudDp1cGRhdGUiLCJhcHBvaW50bWVudDpkZWxldGUiLCJlbmNvdW50ZXI6Y3JlYXRlIiwiZW5jb3VudGVyOnJlYWQiLCJlbmNvdW50ZXI6dXBkYXRlIiwiZW5jb3VudGVyOmRlbGV0ZSIsInF1ZXN0aW9ubmFpcmVfcmVzcG9uc2U6Y3JlYXRlIiwicXVlc3Rpb25uYWlyZV9yZXNwb25zZTpyZWFkIiwicXVlc3Rpb25uYWlyZV9yZXNwb25zZTp1cGRhdGUiLCJxdWVzdGlvbm5haXJlX3Jlc3BvbnNlOmRlbGV0ZSIsImNvbnN1bHRhZ2VudDpjaGF0IiwiYWdlbnQ6Y2hhdCIsImNvbmRpdGlvbjpjcmVhdGUiLCJjb25kaXRpb246ZGVsZXRlIiwiY29uZGl0aW9uOnJlYWQiLCJjb25kaXRpb246dXBkYXRlIiwibWVkaWNhdGlvbl9yZXF1ZXN0OmNyZWF0ZSIsIm1lZGljYXRpb25fcmVxdWVzdDpkZWxldGUiLCJtZWRpY2F0aW9uX3JlcXVlc3Q6cmVhZCIsIm1lZGljYXRpb25fcmVxdWVzdDp1cGRhdGUiLCJvYnNlcnZhdGlvbjpjcmVhdGUiLCJvYnNlcnZhdGlvbjpkZWxldGUiLCJvYnNlcnZhdGlvbjpyZWFkIiwib2JzZXJ2YXRpb246dXBkYXRlIiwib3JnOmNyZWF0ZSIsIm9yZzpkZWxldGUiLCJvcmc6cmVhZCIsIm9yZzp1cGRhdGUiLCJzZXJ2aWNlX3JlcXVlc3Q6Y3JlYXRlIiwic2VydmljZV9yZXF1ZXN0OmRlbGV0ZSIsInNlcnZpY2VfcmVxdWVzdDpyZWFkIiwic2VydmljZV9yZXF1ZXN0OnVwZGF0ZSIsInNsb3Q6Y3JlYXRlIiwic2xvdDpkZWxldGUiLCJzbG90OnJlYWQiLCJzbG90OnVwZGF0ZSIsInRlcm1pbm9sb2d5OnJlYWQiLCJwcmFjdGl0aW9uZXJfcm9sZTpkZWxldGUiLCJwcmFjdGl0aW9uZXJfcm9sZTpjcmVhdGUiLCJwcmFjdGl0aW9uZXJfcm9sZTp1cGRhdGUiLCJwcmFjdGl0aW9uZXJfcm9sZTpyZWFkIiwicHJhY3RpdGlvbmVyOmNyZWF0ZSIsInByYWN0aXRpb25lcjpkZWxldGUiLCJwcmFjdGl0aW9uZXI6cmVhZCIsInByYWN0aXRpb25lcjp1cGRhdGUiLCJkb2N1bWVudF9yZWZlcmVuY2U6Y3JlYXRlIiwiZG9jdW1lbnRfcmVmZXJlbmNlOmRlbGV0ZSIsImRvY3VtZW50X3JlZmVyZW5jZTpyZWFkIiwiZG9jdW1lbnRfcmVmZXJlbmNlOnVwZGF0ZSIsImRpYWdub3N0aWNfcmVwb3J0OmRlbGV0ZSIsImRpYWdub3N0aWNfcmVwb3J0OmNyZWF0ZSIsImRpYWdub3N0aWNfcmVwb3J0OnVwZGF0ZSIsImRpYWdub3N0aWNfcmVwb3J0OnJlYWQiLCJwYXRpZW50LWNsaW5pY2FsLXJlY29yZHM6cmVhZCIsInZpdGFsczpjcmVhdGUiLCJ2aXRhbHM6ZGVsZXRlIiwidml0YWxzOnJlYWQiLCJ2aXRhbHM6dXBkYXRlIl0sIm9yZ2FuaXphdGlvbnMiOlt7ImlkIjoiMGZiNDFlNTAtODJhNC00NjFlLTk2YzctYmQxMTM1OWQ4OTJkIiwibmFtZSI6ImRyZ29kbHkiLCJzbHVnIjoiZHJnb2RseSIsImxvZ28iOm51bGx9XSwiYWN0aXZlT3JnYW5pemF0aW9uUm9sZXMiOlsicGF0aWVudCJdLCJhY3RpdmVSb2xlSWQiOiI1Y2Q4NTYyMS05NGM3LTQ1ZjktYjc1NS04N2NmZTE5N2JjMGQiLCJhY3RpdmVSb2xlIjoicGF0aWVudCIsImFjdGl2ZVJvbGVSZWRpcmVjdFVybCI6Ii9iZXpzL3RlbGVtZWRpY2luZS9wYXRpZW50Iiwic3ViIjoiekRRWmZLalZlc2gxNWk4WVh5OUVXbVVaVTQ5d3FkdDYiLCJleHAiOjE3OTExMDEyOTEsImlzcyI6Imh0dHBzOi8vaWFtLmRyZ29kbHkuY29tIiwiYXVkIjoiaHR0cHM6Ly9pYW0uZHJnb2RseS5jb20ifQ.0zgmTfv7cgNystDyAbFjWjKp9H1dFkyaa3c-n67nyh3E6GflOOM2KBdE4Sx1Yprt4zQj-EjCqbeQ42lZXb6yAw"
+            // Optional patient context (e.g. "name = Jane Doe, age = 34").
+            // Must be URL-encoded so spaces, commas and "=" survive the query string.
+            const contextValue = (document.getElementById("patientContext").value || "").trim();
+            let wsUrl = `ws://localhost:8000/ws/audio?token=${token}`;
+            if (contextValue) {
+                wsUrl += `&patient_context=${encodeURIComponent(contextValue)}`;
+            }
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = async () => {
+                console.log("Connected to server");
+                statusEl.innerText = "Connected";
+                micEl.classList.add("recording");
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new AudioContext({ sampleRate: 16000 });
+
+                source = audioContext.createMediaStreamSource(mediaStream);
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                processor.onaudioprocess = (event) => {
+                    const input = event.inputBuffer.getChannelData(0);
+                    const pcm = new Int16Array(input.length);
+
+                    for (let i = 0; i < input.length; i++) {
+                        let s = Math.max(-1, Math.min(1, input[i]));
+                        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+
+                    if (!conversationEnded && ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(pcm.buffer);
+                    }
+                };
+            };
+
+            ws.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === "status") {
+                    const statusText = {
+                        "greeting": "Speaking greeting...",
+                        "ready": "Ready — you can speak",
+                        "thinking": "Thinking...",
+                        "end": "Conversation ended",
+                    }[data.status] || data.status;
+                    statusEl.innerText = statusText;
+
+                    if (data.status === "ready") {
+                        micEl.classList.add("recording");
+                    } else if (data.status === "thinking") {
+                        micEl.classList.remove("recording");
+                    } else if (data.status === "end") {
+                        endConversation();
+                    }
+                }
+
+                if (data.type === "status_end") {
+                    endConversation();
+                }
+
+                if (data.type === "transcript") {
+                    transcriptEl.innerHTML = data.text;
+                }
+
+                if (data.type === "text") {
+                    assistantEl.innerHTML += data.text;
+                }
+
+                if (data.type === "audio") {
+                    if (data.audio && typeof data.audio === "string" && data.audio.trim().length > 0) {
+                        // 🌟 Direct Base64 to ArrayBuffer streaming processor injection
+                        playStreamingBuffer(data.audio);
+                    }
+                }
+
+                if (data.type === "error") {
+                    console.error(data.message);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.log("WebSocket Error: ", error);
+            };
+
+            ws.onclose = () => {
+                console.log("Disconnected from server");
+                stopVoice();
+            };
+        }
+
+        // 🌟 New Linear ArrayBuffer Scheduler Engine
+        function playStreamingBuffer(base64Data) {
+            if (!playbackContext) return;
+
+            // Strip incoming WAV structural headers from middle chunks if present
+            let cleanBase64 = base64Data;
+            if (cleanBase64.startsWith("UklGR")) {
+                // Contains RIFF WAV text marker header block, bypass bytes 0-44
+                const rawBinary = atob(cleanBase64);
+                if (rawBinary.length > 44) {
+                    const headerlessBinary = rawBinary.substring(44);
+                    cleanBase64 = btoa(headerlessBinary);
+                }
+            }
+
+            // Convert base64 straight to standard binary array buffer context
+            const binaryString = window.atob(cleanBase64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            // Parse continuous PCM 16-bit Mono data frames directly
+            const rawPCM = new Int16Array(bytes.buffer);
+            const bufferLength = rawPCM.length;
+
+            if (bufferLength === 0) return;
+
+            // Build native hardware audio data buffers dynamically
+            const audioBuffer = playbackContext.createBuffer(1, bufferLength, 24000);
+            const channelData = audioBuffer.getChannelData(0);
+
+            for (let i = 0; i < bufferLength; i++) {
+                channelData[i] = rawPCM[i] / 32768.0;
+            }
+
+            // Frame timestamp synchronization scheduler
+            const bufferSource = playbackContext.createBufferSource();
+            bufferSource.buffer = audioBuffer;
+            bufferSource.connect(playbackContext.destination);
+
+            const currentTime = playbackContext.currentTime;
+            if (nextStartTime < currentTime) {
+                nextStartTime = currentTime;
+            }
+
+            bufferSource.start(nextStartTime);
+            nextStartTime += audioBuffer.duration;
+        }
+
+        // function playStreamingBuffer(base64Data) {
+        //     if (!playbackContext) return;
+
+        //     // Use atob to get binary data
+        //     const binaryString = window.atob(base64Data);
+        //     const bytes = new Uint8Array(binaryString.length);
+        //     for (let i = 0; i < binaryString.length; i++) {
+        //         bytes[i] = binaryString.charCodeAt(i);
+        //     }
+
+        //     // Only slice if it's actually a WAV header (RIFF)
+        //     // If Sarvam sends raw PCM, do NOT slice 44 bytes!
+        //     let pcmData = bytes;
+        //     if (bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70) {
+        //         pcmData = bytes.slice(44);
+        //     }
+
+        //     const rawPCM = new Int16Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 2);
+
+        //     // Crucial: Use the sample rate the TTS actually sends (e.g., 24000)
+        //     const audioBuffer = playbackContext.createBuffer(1, rawPCM.length, 24000);
+        //     audioBuffer.copyToChannel(new Float32Array(rawPCM.map(s => s / 32768.0)), 0);
+
+        //     const bufferSource = playbackContext.createBufferSource();
+        //     bufferSource.buffer = audioBuffer;
+        //     bufferSource.connect(playbackContext.destination);
+
+        //     // Dynamic scheduling
+        //     const currentTime = playbackContext.currentTime;
+        //     if (nextStartTime < currentTime) {
+        //         nextStartTime = currentTime + 0.05; // Add a tiny 50ms safety buffer
+        //     }
+        //     bufferSource.start(nextStartTime);
+        //     nextStartTime += audioBuffer.duration;
+        // }
+
+        function stopVoice() {
+            if (processor) processor.disconnect();
+            if (source) source.disconnect();
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext && audioContext.state !== "closed") {
+                audioContext.close();
+            }
+            if (playbackContext && playbackContext.state !== "closed") {
+                playbackContext.close();
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+
+            ws = null;
+            playbackContext = null;
+            micEl.classList.remove("recording");
+            statusEl.innerText = "Disconnected";
+        }
+    </script>
+
+</body>
+
+</html>

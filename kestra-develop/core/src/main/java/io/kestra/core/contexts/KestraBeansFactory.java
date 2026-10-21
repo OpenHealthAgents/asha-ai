@@ -1,0 +1,162 @@
+package io.kestra.core.contexts;
+
+import java.io.IOException;
+import java.util.Map;
+
+import io.kestra.core.contexts.configuration.RepositoryConfiguration;
+import io.kestra.core.contexts.configuration.StorageConfiguration;
+import io.kestra.core.exceptions.KestraRuntimeException;
+import io.kestra.core.plugins.PluginCatalogService;
+import io.kestra.core.plugins.PluginRegistry;
+import io.kestra.core.plugins.PluginSchemaBundleService;
+import io.kestra.core.repositories.LogDataStoreInterface;
+import io.kestra.core.repositories.log.LogDataStoreInterfaceFactory;
+import io.kestra.core.repositories.log.LogsConfig;
+import io.kestra.core.storages.StorageInterface;
+import io.kestra.core.storages.StorageInterfaceFactory;
+import io.kestra.core.utils.ExecutorsUtils;
+
+import io.micronaut.context.ApplicationContext;
+import io.micronaut.context.annotation.*;
+import io.micronaut.core.annotation.Nullable;
+import io.micronaut.core.convert.format.MapFormat;
+import io.micronaut.core.naming.conventions.StringConvention;
+import io.micronaut.http.client.HttpClient;
+import io.micronaut.http.client.annotation.Client;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
+import jakarta.validation.Validator;
+
+import static io.kestra.core.repositories.log.LogDataStoreInterfaceFactory.KESTRA_LOGS_TYPE_CONFIG;
+import static io.kestra.core.storages.StorageInterfaceFactory.KESTRA_STORAGE_TYPE_CONFIG;
+
+/**
+ * Beans built from configuration for everything except the queues: the plugin-backed storage and log store, and the
+ * plugin catalog. The queues, the {@link PluginRegistry} and the queue backend plugin are built by
+ * {@link KestraQueueBeansFactory}, which this factory depends on and never the other way round.
+ * <p>
+ * Bean creation is split in two factories because a Micronaut factory is instantiated, with all its injected
+ * fields, before any of its bean methods can run. The queue beans are the root of the runtime graph (the
+ * executor, the service liveness coordinator and the plugin manager all inject them), so they have to live in a
+ * factory whose own state cannot reach a queue; this one injects configuration beans and, in the Enterprise
+ * Edition, services that do. The split also lets an edition {@code @Replaces(factory = ...)} the queue set and
+ * the registry without redeclaring the beans here, since a replacement covers every bean of the replaced factory.
+ * <p>
+ * Startup sequence: the eager {@code @Context} beans inject a queue, which builds {@link KestraQueueBeansFactory}
+ * and, through it, the registry (where the {@code --plugins} directory is registered) and the queue backend; the
+ * beans of this factory are created afterwards, on first use, once the registry exists. Only then does the CLI
+ * command run and start the plugin manager.
+ */
+@Factory
+public class KestraBeansFactory {
+
+    @Inject
+    private Validator validator;
+
+    @Inject
+    private StorageConfig storageConfig;
+
+    @Inject
+    private StorageConfiguration storageConfiguration;
+
+    @Inject
+    LogsConfig logsConfig;
+
+    @Inject
+    private RepositoryConfiguration repositoryConfiguration;
+
+    // @Primary so unqualified injections (e.g. PluginAutoInstallService) resolve to this
+    // icon-less catalog rather than the webserver's @Named("withIcons") variant.
+    @Primary
+    @Singleton
+    public PluginCatalogService pluginCatalogService(
+        @Client("api") HttpClient httpClient,
+        ExecutorsUtils executorsUtils,
+        PluginSchemaBundleService schemaBundleService) {
+        return new PluginCatalogService(httpClient, false, true, executorsUtils, schemaBundleService);
+    }
+
+    @Singleton
+    public StorageInterfaceFactory storageInterfaceFactory(final PluginRegistry pluginRegistry) {
+        return new StorageInterfaceFactory(pluginRegistry, validator);
+    }
+
+    @Requires(missingBeans = StorageInterface.class)
+    @Singleton
+    @Bean(preDestroy = "close")
+    public StorageInterface storageInterface(final StorageInterfaceFactory storageInterfaceFactory) throws IOException {
+        String pluginId = getStoragePluginId(storageInterfaceFactory);
+        return storageInterfaceFactory.make(null, pluginId, storageConfig.getStorageConfig(pluginId));
+    }
+
+    public String getStoragePluginId(StorageInterfaceFactory storageInterfaceFactory) {
+        return storageConfiguration.type().orElseThrow(
+            () -> new KestraRuntimeException(
+                String.format(
+                    "No storage configured through the application property '%s'. Supported types are: %s", KESTRA_STORAGE_TYPE_CONFIG,
+                    storageInterfaceFactory.getLoggableTypeIds()
+                )
+            )
+        );
+    }
+
+    @Singleton
+    public LogDataStoreInterfaceFactory logDataStoreInterfaceFactory(final PluginRegistry pluginRegistry,
+        final ApplicationContext applicationContext) {
+        return new LogDataStoreInterfaceFactory(pluginRegistry, validator, applicationContext);
+    }
+
+    @Requires(property = "kestra.server-type", notEquals = "WORKER")
+    @Singleton
+    public LogDataStoreInterface logDataStore(final LogDataStoreInterfaceFactory logDataStoreInterfaceFactory) {
+        ensureLogDataStoreAllowed();
+        String pluginId = getLogDataStorePluginId(logDataStoreInterfaceFactory);
+        return logDataStoreInterfaceFactory.make(pluginId, logsConfig.getLogConfig(pluginId));
+    }
+
+    /**
+     * Guards the external log store, which is an Enterprise Edition feature; the Enterprise Edition
+     * overrides this to allow it, gated by its license instead.
+     */
+    protected void ensureLogDataStoreAllowed() {
+        logsConfig.type().ifPresent(type -> {
+            throw new IllegalArgumentException(
+                "Configuring an external log store ('%s=%s') requires Kestra Enterprise Edition.".formatted(KESTRA_LOGS_TYPE_CONFIG, type)
+            );
+        });
+    }
+
+    /**
+     * Resolves the configured log data store type, falling back to {@code kestra.repository.type} so
+     * that existing installs (no {@code kestra.logs.type}) keep storing logs in the main database.
+     */
+    public String getLogDataStorePluginId(LogDataStoreInterfaceFactory logDataStoreInterfaceFactory) {
+        String type = logsConfig.type().orElse(repositoryConfiguration.type());
+        if (type == null) {
+            throw new KestraRuntimeException(
+                String.format(
+                    "No log store configured through the application property '%s' (nor a fallback '%s'). Supported types are: %s",
+                    KESTRA_LOGS_TYPE_CONFIG, "kestra.repository.type", logDataStoreInterfaceFactory.getLoggableTypeIds()
+                )
+            );
+        }
+        // The in-memory backend is H2 with an in-memory datasource.
+        return "memory".equalsIgnoreCase(type) ? "h2" : type;
+    }
+
+    @ConfigurationProperties("kestra")
+    public record StorageConfig(
+        @Nullable
+        @MapFormat(keyFormat = StringConvention.CAMEL_CASE, transformation = MapFormat.MapTransformation.NESTED) Map<String, Object> storage) {
+
+        /**
+         * Returns the configuration for the configured storage.
+         *
+         * @return the configuration.
+         */
+        @SuppressWarnings("unchecked")
+        public Map<String, Object> getStorageConfig(String type) {
+            return (Map<String, Object>) storage.get(StringConvention.CAMEL_CASE.format(type));
+        }
+    }
+}

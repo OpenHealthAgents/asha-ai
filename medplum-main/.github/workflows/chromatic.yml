@@ -1,0 +1,79 @@
+name: 'Chromatic'
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  chromatic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Chromatic authenticates with projectToken, not GITHUB_TOKEN
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          # After v6, the default for `package-manager-cache` is true. We however, have historically used caching with a fallback which is not supported by the setup-node action
+          # See: https://github.com/actions/setup-node/issues/328
+          package-manager-cache: false
+
+      - name: Cache node modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - name: Setup TurboRepo
+        if: ${{ env.SECRETS_TURBO_TOKEN != '' }}
+        run: |
+          echo "TURBO_TOKEN=${{ secrets.TURBO_TOKEN }}" >> $GITHUB_ENV
+          echo "TURBO_TEAM=${{ secrets.TURBO_TEAM }}" >> $GITHUB_ENV
+          echo "TURBO_CACHE=remote:rw" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Storybook dependencies
+        # Chromatic runs build:test itself to inject output and TurboSnap stats options.
+        # Build only dependencies here to avoid building Storybook twice.
+        run: npx turbo run build '--filter=@medplum/storybook^...'
+
+      - name: Publish @medplum/react Chromatic
+        uses: chromaui/action@be896f860638c97a2e074931c57a3befd5363b56 # v18.10.0
+        id: publish_chromatic
+        continue-on-error: true
+        with:
+          projectToken: chpt_429b596edaecafb
+          workingDir: packages/storybook
+          buildScriptName: build:test
+          autoAcceptChanges: 'main'
+          exitOnceUploaded: true
+          exitZeroOnChanges: true
+          onlyChanged: true
+
+      - name: Persist log
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.publish_chromatic.outcome == 'failure'
+        with:
+          path: 'packages/storybook/build-storybook.log'
+          archive: false
+
+      - name: Retain build status
+        if: steps.publish_chromatic.outcome == 'failure'
+        run: exit 1

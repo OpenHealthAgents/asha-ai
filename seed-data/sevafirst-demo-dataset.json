@@ -1,0 +1,882 @@
+{
+  "metadata": {
+    "project": "SevaFirst: AI Copilot for ASHA Workers & Frontline Health Teams",
+    "authority": "Government of India - National Health Mission (NHM)",
+    "standard": "ABDM / HL7 FHIR R4 / SNOMED-CT / LOINC",
+    "generated_at": "2026-10-21T22:27:29.033Z",
+    "state": "Tamil Nadu",
+    "district": "Chengalpattu",
+    "village": "Thazhambur",
+    "village_lgd_code": "629375"
+  },
+  "phc_facility": {
+    "id": "phc-thazhambur",
+    "name": "Primary Health Centre Thazhambur",
+    "state_code": "TN",
+    "district_code": "dist-chengalpattu",
+    "block_code": "blk-thiruporur",
+    "village_lgd_code": "629375",
+    "subcentre_id": "sc-thazhambur-north",
+    "medical_officer": {
+      "id": "usr-mo-radhakrishnan-01",
+      "name": "Dr. K. Radhakrishnan, MBBS, MD (Community Medicine)",
+      "username": "mo_thazhambur",
+      "email": "dr.radhakrishnan@nhm.tn.gov.in",
+      "phone": "+919444123456",
+      "role": "ROLE_PHC_MO",
+      "hpr_id": "HPR-TN-982341"
+    },
+    "supplies_stock": [
+      {
+        "item_code": "MED-IFA-RED",
+        "item_name": "Iron Folic Acid (IFA) Tablets (Maternal Red)",
+        "current_quantity": 45,
+        "minimum_threshold": 250,
+        "unit": "strips",
+        "is_bottleneck": true
+      },
+      {
+        "item_code": "MED-CALCIUM-500",
+        "item_name": "Calcium & Vitamin D3 Tablets (500mg)",
+        "current_quantity": 80,
+        "minimum_threshold": 300,
+        "unit": "tablets",
+        "is_bottleneck": true
+      },
+      {
+        "item_code": "MED-OXYTOCIN",
+        "item_name": "Oxytocin Injection (10 IU/mL Ampoules)",
+        "current_quantity": 14,
+        "minimum_threshold": 50,
+        "unit": "ampoules",
+        "is_bottleneck": true
+      },
+      {
+        "item_code": "MED-ORS-ZINC",
+        "item_name": "ORS Sachets + Zinc Sulfate (Pediatric)",
+        "current_quantity": 420,
+        "minimum_threshold": 200,
+        "unit": "packets",
+        "is_bottleneck": false
+      },
+      {
+        "item_code": "MED-PCM-500",
+        "item_name": "Paracetamol 500mg",
+        "current_quantity": 850,
+        "minimum_threshold": 300,
+        "unit": "tablets",
+        "is_bottleneck": false
+      }
+    ]
+  },
+  "asha_workers": [
+    {
+      "id": "usr-asha-kavitha-629375",
+      "name": "Kavitha Sundaram",
+      "username": "asha_kavitha",
+      "phone": "+919840112233",
+      "role": "ROLE_ASHA",
+      "hpr_id": "HPR-ASHA-TN-629375-01",
+      "state_code": "TN",
+      "district_code": "dist-chengalpattu",
+      "block_code": "blk-thiruporur",
+      "phc_id": "phc-thazhambur",
+      "subcentre_id": "sc-thazhambur-north",
+      "village_lgd_code": "629375",
+      "assigned_households": [
+        "hh-thazhambur-001",
+        "hh-thazhambur-002",
+        "hh-thazhambur-003",
+        "hh-thazhambur-004",
+        "hh-thazhambur-005",
+        "hh-thazhambur-006",
+        "hh-thazhambur-007",
+        "hh-thazhambur-008"
+      ],
+      "offline_token": {
+        "token_id": "tok-off-cf9086d6f427f713",
+        "issued_at": "2026-10-21T22:27:29.028Z",
+        "expires_at": "2026-11-04T22:27:29.028Z",
+        "ttl_days": 14,
+        "signature": "b8a13bd672dc46f25ab05d613ec5ffb92b7805a9578ca993720603291c2fb3c7"
+      }
+    },
+    {
+      "id": "usr-asha-selvi-629375",
+      "name": "Selvi Murugan",
+      "username": "asha_selvi",
+      "phone": "+919840445566",
+      "role": "ROLE_ASHA",
+      "hpr_id": "HPR-ASHA-TN-629375-02",
+      "state_code": "TN",
+      "district_code": "dist-chengalpattu",
+      "block_code": "blk-thiruporur",
+      "phc_id": "phc-thazhambur",
+      "subcentre_id": "sc-thazhambur-north",
+      "village_lgd_code": "629375",
+      "assigned_households": [
+        "hh-thazhambur-009",
+        "hh-thazhambur-010",
+        "hh-thazhambur-011",
+        "hh-thazhambur-012",
+        "hh-thazhambur-013",
+        "hh-thazhambur-014",
+        "hh-thazhambur-015"
+      ],
+      "offline_token": {
+        "token_id": "tok-off-d91bb110445564aa",
+        "issued_at": "2026-10-21T22:27:29.030Z",
+        "expires_at": "2026-11-04T22:27:29.030Z",
+        "ttl_days": 14,
+        "signature": "ca68d11bf491a87cf40f6018a5700781c4dbe96158285ee3ac73ffa1a388c28d"
+      }
+    }
+  ],
+  "households": [
+    {
+      "id": "hh-thazhambur-001",
+      "household_number": "THZ-WARD1-042",
+      "head_of_household": "Anbarasan Muthu",
+      "address_line": "No. 14, Pillayar Kovil Street",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-anbarasan-muthu",
+          "name": "Anbarasan Muthu",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1994-06-15",
+          "age_years": 32,
+          "abha_id": "91-4432-8761-9011",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-priya-anbarasan",
+          "name": "Priya Anbarasan",
+          "relationship": "Spouse (Pregnant Mother)",
+          "gender": "female",
+          "birth_date": "2000-03-22",
+          "age_years": 26,
+          "abha_id": "91-4432-8761-9012",
+          "rch_id": "RCH-TN-2026-004521",
+          "is_pregnant": true,
+          "gestational_weeks": 32,
+          "gravida_para": "G2P1",
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-baby-kavin",
+          "name": "Baby Kavin Anbarasan",
+          "relationship": "Child (Infant)",
+          "gender": "male",
+          "birth_date": "2025-08-10",
+          "age_years": 1,
+          "abha_id": "91-4432-8761-9013",
+          "rch_id": "RCH-CHILD-TN-2025-089123",
+          "immunizations_done": [
+            "BCG",
+            "OPV-0",
+            "HepB-0",
+            "OPV-1",
+            "Pentavalent-1",
+            "Rota-1",
+            "OPV-2",
+            "Pentavalent-2",
+            "Rota-2"
+          ],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-meenakshi-ammal",
+          "name": "Meenakshi Ammal",
+          "relationship": "Mother-in-law (Elder)",
+          "gender": "female",
+          "birth_date": "1960-11-05",
+          "age_years": 65,
+          "abha_id": "91-4432-8761-9014",
+          "immunizations_done": [],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-002",
+      "household_number": "THZ-WARD1-043",
+      "head_of_household": "Murugan Selvam",
+      "address_line": "No. 18, Pillayar Kovil Street",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-murugan-selvam",
+          "name": "Murugan Selvam",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1992-04-10",
+          "age_years": 34,
+          "abha_id": "91-4432-8761-9021",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-deepa-murugan",
+          "name": "Deepa Murugan",
+          "relationship": "Spouse (Pregnant Mother)",
+          "gender": "female",
+          "birth_date": "1997-08-14",
+          "age_years": 29,
+          "abha_id": "91-4432-8761-9022",
+          "rch_id": "RCH-TN-2026-004522",
+          "is_pregnant": true,
+          "gestational_weeks": 20,
+          "gravida_para": "G1P0",
+          "immunizations_done": [
+            "TT-1",
+            "TT-2"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-003",
+      "household_number": "THZ-WARD1-044",
+      "head_of_household": "Venkatesan Ramasamy",
+      "address_line": "No. 22, Mariamman Kovil Street",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-venkatesan-ramasamy",
+          "name": "Venkatesan Ramasamy",
+          "relationship": "Head of Household (Senior)",
+          "gender": "male",
+          "birth_date": "1964-02-18",
+          "age_years": 62,
+          "abha_id": "91-4432-8761-9031",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-kamala-venkatesan",
+          "name": "Kamala Venkatesan",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1968-07-25",
+          "age_years": 58,
+          "abha_id": "91-4432-8761-9032",
+          "immunizations_done": [],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-004",
+      "household_number": "THZ-WARD1-045",
+      "head_of_household": "Ravi Chandran",
+      "address_line": "No. 29, North Mada Street",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-ravi-chandran",
+          "name": "Ravi Chandran",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1993-01-12",
+          "age_years": 33,
+          "abha_id": "91-4432-8761-9041",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-lakshmi-ravi",
+          "name": "Lakshmi Ravi",
+          "relationship": "Spouse (Postnatal Mother)",
+          "gender": "female",
+          "birth_date": "1998-05-30",
+          "age_years": 28,
+          "abha_id": "91-4432-8761-9042",
+          "rch_id": "RCH-TN-2025-003891",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1",
+            "TT-2",
+            "TT-Booster"
+          ],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-baby-dharani",
+          "name": "Baby Dharani Ravi",
+          "relationship": "Infant (42 days)",
+          "gender": "female",
+          "birth_date": "2026-09-10",
+          "age_years": 0,
+          "abha_id": "91-4432-8761-9043",
+          "rch_id": "RCH-CHILD-TN-2026-091102",
+          "immunizations_done": [
+            "BCG",
+            "OPV-0",
+            "HepB-0",
+            "OPV-1",
+            "Pentavalent-1",
+            "Rota-1"
+          ],
+          "cbac_screened": false
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-005",
+      "household_number": "THZ-WARD3-105",
+      "head_of_household": "Karthik Natarajan",
+      "address_line": "No. 20, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-karthik-head",
+          "name": "Karthik Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1985-06-10",
+          "age_years": 45,
+          "abha_id": "91-4432-8761-9055",
+          "immunizations_done": [],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-karthik-spouse",
+          "name": "Vasanthi Karthik",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1995-06-20",
+          "age_years": 37,
+          "abha_id": "91-4432-8761-9075",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-006",
+      "household_number": "THZ-WARD1-106",
+      "head_of_household": "Subramanian Natarajan",
+      "address_line": "No. 24, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-subramanian-head",
+          "name": "Subramanian Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1986-07-10",
+          "age_years": 46,
+          "abha_id": "91-4432-8761-9056",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-subramanian-spouse",
+          "name": "Vasanthi Subramanian",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1996-07-20",
+          "age_years": 38,
+          "abha_id": "91-4432-8761-9076",
+          "is_pregnant": true,
+          "gestational_weeks": 16,
+          "rch_id": "RCH-TN-2026-00456",
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-007",
+      "household_number": "THZ-WARD2-107",
+      "head_of_household": "Balaji Natarajan",
+      "address_line": "No. 28, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-balaji-head",
+          "name": "Balaji Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1987-08-10",
+          "age_years": 47,
+          "abha_id": "91-4432-8761-9057",
+          "immunizations_done": [],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-balaji-spouse",
+          "name": "Vasanthi Balaji",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1997-08-20",
+          "age_years": 39,
+          "abha_id": "91-4432-8761-9077",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-008",
+      "household_number": "THZ-WARD3-108",
+      "head_of_household": "Govindasamy Natarajan",
+      "address_line": "No. 32, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-kavitha-629375",
+      "members": [
+        {
+          "id": "pat-govindasamy-head",
+          "name": "Govindasamy Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1988-09-10",
+          "age_years": 48,
+          "abha_id": "91-4432-8761-9058",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-govindasamy-spouse",
+          "name": "Vasanthi Govindasamy",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1990-01-20",
+          "age_years": 32,
+          "abha_id": "91-4432-8761-9078",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-009",
+      "household_number": "THZ-WARD1-109",
+      "head_of_household": "Arumugam Natarajan",
+      "address_line": "No. 36, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-arumugam-head",
+          "name": "Arumugam Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1980-01-10",
+          "age_years": 49,
+          "abha_id": "91-4432-8761-9059",
+          "immunizations_done": [],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-arumugam-spouse",
+          "name": "Vasanthi Arumugam",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1991-02-20",
+          "age_years": 33,
+          "abha_id": "91-4432-8761-9079",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-010",
+      "household_number": "THZ-WARD2-110",
+      "head_of_household": "Senthil Natarajan",
+      "address_line": "No. 40, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-senthil-head",
+          "name": "Senthil Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1981-02-10",
+          "age_years": 40,
+          "abha_id": "91-4432-8761-9060",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-senthil-spouse",
+          "name": "Vasanthi Senthil",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1992-03-20",
+          "age_years": 34,
+          "abha_id": "91-4432-8761-9080",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-011",
+      "household_number": "THZ-WARD3-111",
+      "head_of_household": "Velu Natarajan",
+      "address_line": "No. 44, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-velu-head",
+          "name": "Velu Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1982-03-10",
+          "age_years": 41,
+          "abha_id": "91-4432-8761-9061",
+          "immunizations_done": [],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-velu-spouse",
+          "name": "Vasanthi Velu",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1993-04-20",
+          "age_years": 35,
+          "abha_id": "91-4432-8761-9081",
+          "is_pregnant": true,
+          "gestational_weeks": 28,
+          "rch_id": "RCH-TN-2026-004511",
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-012",
+      "household_number": "THZ-WARD1-112",
+      "head_of_household": "Ganesan Natarajan",
+      "address_line": "No. 48, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-ganesan-head",
+          "name": "Ganesan Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1983-04-10",
+          "age_years": 42,
+          "abha_id": "91-4432-8761-9062",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-ganesan-spouse",
+          "name": "Vasanthi Ganesan",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1994-05-20",
+          "age_years": 36,
+          "abha_id": "91-4432-8761-9082",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-013",
+      "household_number": "THZ-WARD2-113",
+      "head_of_household": "Saravanan Natarajan",
+      "address_line": "No. 52, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-saravanan-head",
+          "name": "Saravanan Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1984-05-10",
+          "age_years": 43,
+          "abha_id": "91-4432-8761-9063",
+          "immunizations_done": [],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-saravanan-spouse",
+          "name": "Vasanthi Saravanan",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1995-06-20",
+          "age_years": 37,
+          "abha_id": "91-4432-8761-9083",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-014",
+      "household_number": "THZ-WARD3-114",
+      "head_of_household": "Rajendran Natarajan",
+      "address_line": "No. 56, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-rajendran-head",
+          "name": "Rajendran Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1985-06-10",
+          "age_years": 44,
+          "abha_id": "91-4432-8761-9064",
+          "immunizations_done": [],
+          "cbac_screened": true
+        },
+        {
+          "id": "pat-rajendran-spouse",
+          "name": "Vasanthi Rajendran",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1996-07-20",
+          "age_years": 38,
+          "abha_id": "91-4432-8761-9084",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    },
+    {
+      "id": "hh-thazhambur-015",
+      "household_number": "THZ-WARD1-115",
+      "head_of_household": "Dhanapal Natarajan",
+      "address_line": "No. 60, Village High Road",
+      "village_name": "Thazhambur",
+      "village_lgd_code": "629375",
+      "assigned_asha_id": "usr-asha-selvi-629375",
+      "members": [
+        {
+          "id": "pat-dhanapal-head",
+          "name": "Dhanapal Natarajan",
+          "relationship": "Head of Household",
+          "gender": "male",
+          "birth_date": "1986-07-10",
+          "age_years": 45,
+          "abha_id": "91-4432-8761-9065",
+          "immunizations_done": [],
+          "cbac_screened": false
+        },
+        {
+          "id": "pat-dhanapal-spouse",
+          "name": "Vasanthi Dhanapal",
+          "relationship": "Spouse",
+          "gender": "female",
+          "birth_date": "1997-08-20",
+          "age_years": 39,
+          "abha_id": "91-4432-8761-9085",
+          "is_pregnant": false,
+          "immunizations_done": [
+            "TT-1"
+          ],
+          "cbac_screened": true
+        }
+      ]
+    }
+  ],
+  "total_households_count": 15,
+  "total_beneficiaries_count": 33,
+  "clinical_scenarios": {
+    "scenario_a_maternal_emergency": {
+      "scenario_name": "Scenario A: High-Risk Maternal Pre-Eclampsia Emergency Escalation",
+      "category": "HIGH_RISK_MATERNAL_TRIAGE",
+      "beneficiary": {
+        "patient_id": "pat-priya-anbarasan",
+        "name": "Priya Anbarasan",
+        "age": 26,
+        "parity": "G2P1",
+        "gestational_age": "32 weeks",
+        "abha_id": "91-4432-8761-9012",
+        "rch_id": "RCH-TN-2026-004521",
+        "household_id": "hh-thazhambur-001"
+      },
+      "field_voice_transcripts": {
+        "regional_tamil": "அக்கா, எனக்கு மூணு நாளா கடுமையான தலைவலி இருக்கு, கண்ணு மங்கலா தெரியுது, ரெண்டு கால்லயும் ரொம்ப வீக்கம் வந்திருக்கு... இன்னைக்கு குழந்தை அசைவு கூட ரொம்ப குறைவா இருக்கு அக்கா.",
+        "regional_hindi": "दीदी, मुझे पिछले तीन दिनों से बहुत तेज सिरदर्द हो रहा है, आंखों के आगे धुंधलापन दिख रहा है और दोनों पैरों में बहुत सूजन आ गई है। बच्चा भी कम हिल रहा है।",
+        "sarvam_audio_file": "s3://asha-field-media/2026/10/22/audio_priya_preeclampsia_32w.opus",
+        "sarvam_confidence": 0.968
+      },
+      "bluetooth_device_vitals": {
+        "device_model": "Omron HEM-7120 Smart BLE BP Monitor",
+        "systolic_bp_mmhg": 152,
+        "diastolic_bp_mmhg": 98,
+        "hemoglobin_g_dl": 7.6,
+        "fetal_heart_rate_bpm": 118,
+        "temperature_f": 98.4,
+        "spo2_percent": 98
+      },
+      "mcp_clinical_triage": {
+        "risk_level": "HIGH",
+        "clinical_condition": "Severe Pre-eclampsia in 3rd Trimester with Moderate Anemia",
+        "snomed_code": "398254007",
+        "danger_flags": [
+          "Systolic BP >= 140 mmHg (152 mmHg)",
+          "Diastolic BP >= 90 mmHg (98 mmHg)",
+          "Severe persistent headache & visual disturbance (scotoma)",
+          "Bilateral pedal edema",
+          "Reduced fetal movement (FHR 118 bpm)",
+          "Hemoglobin < 8 g/dL (7.6 g/dL)"
+        ],
+        "immediate_action": "Immediate Emergency Referral to PHC Thazhambur / 108 Ambulance Dispatch"
+      },
+      "escalation_triggers": {
+        "kestra_flow": "sevafirst_frontline/high_risk_referral_flow.yml",
+        "phc_ticket_priority": "EMERGENCY_RED",
+        "dispatch_108_ambulance": true,
+        "sms_whatsapp_recipient": "+919444123456",
+        "assigned_doctor": "Dr. K. Radhakrishnan (MO, PHC Thazhambur)"
+      }
+    },
+    "scenario_b_pediatric_care_gap": {
+      "scenario_name": "Scenario B: Proactive Pediatric Immunization Gap Interception",
+      "category": "PEDIATRIC_CARE_GAP_PROACTIVE_INTERCEPTION",
+      "beneficiary": {
+        "patient_id": "pat-baby-kavin",
+        "name": "Baby Kavin Anbarasan",
+        "age_months": 14,
+        "gender": "male",
+        "abha_id": "91-4432-8761-9013",
+        "rch_id": "RCH-CHILD-TN-2025-089123",
+        "household_id": "hh-thazhambur-001"
+      },
+      "overdue_immunizations": [
+        {
+          "vaccine_code": "PENTAVALENT-3",
+          "vaccine_name": "Pentavalent 3 (DPT + HepB + Hib Booster)",
+          "due_age": "14 weeks",
+          "days_overdue": 240,
+          "urgency": "HIGH"
+        },
+        {
+          "vaccine_code": "MR-1",
+          "vaccine_name": "Measles-Rubella 1st Dose + Vitamin A",
+          "due_age": "9-12 months",
+          "days_overdue": 60,
+          "urgency": "CRITICAL"
+        }
+      ],
+      "asha_copilot_behavior": {
+        "prompt_trigger": "ON_HOUSEHOLD_VISIT_EXIT_CHECK",
+        "ui_card_color": "AMBER",
+        "localized_hesitancy_audio": {
+          "tamil_asset_url": "https://filenest.nhm.gov.in/api/v1/media/health-education/ta/mr_safety_counseling.opus",
+          "tamil_script": "அம்மா, தம்பி கவினுக்கு ஒரு வயசு முடிஞ்சிருச்சு. தட்டம்மை (Measles-Rubella) தடுப்பூசியும், பென்டாவேலன்ட் 3-வது தவணையும் இன்னும் போடல. தடுப்பூசி போடுவதால் குழந்தைக்கு எந்த ஆபத்தும் வராது. வர்ற புதன்கிழமை நம்ம ஆரம்ப சுகாதார நிலையத்துல (PHC) இலவசமா போட்டுடலாம் அம்மா.",
+          "hindi_asset_url": "https://filenest.nhm.gov.in/api/v1/media/health-education/hi/mr_safety_counseling.opus",
+          "hindi_script": "माताजी, कवीन 14 महीने का हो गया है। खसरा-रूबेला (MR-1) और पेंटावेलेंट-3 का टीका अभी बाकी है। टीका पूरी तरह सुरक्षित है। आने वाले बुधवार को उप-केंद्र पर अवश्य लगवाएं।"
+        }
+      }
+    },
+    "scenario_c_offline_sync": {
+      "scenario_name": "Scenario C: Remote Offline Voice Sync & Telemetry Pipeline",
+      "category": "OFFLINE_SYNC_RESILIENCE_TELEMETRY",
+      "device_state": {
+        "connectivity": "OFFLINE",
+        "cache_backend": "SQLite / MMKV",
+        "offline_token_valid": true
+      },
+      "queued_offline_visits": [
+        {
+          "visit_uuid": "vst-off-20261022-thz-001",
+          "household_id": "hh-thazhambur-002",
+          "patient_id": "pat-deepa-murugan",
+          "beneficiary_name": "Deepa Murugan (20w ANC)",
+          "encounter_type": "ANC_TRIMESTER_2_CHECKUP",
+          "audio_note_size_bytes": 42800,
+          "recorded_at": "2026-10-22T04:15:00Z"
+        },
+        {
+          "visit_uuid": "vst-off-20261022-thz-002",
+          "household_id": "hh-thazhambur-003",
+          "patient_id": "pat-venkatesan-ramasamy",
+          "beneficiary_name": "Venkatesan Ramasamy (62y Elder)",
+          "encounter_type": "NCD_CBAC_SCREENING",
+          "audio_note_size_bytes": 38200,
+          "recorded_at": "2026-10-22T04:35:00Z"
+        },
+        {
+          "visit_uuid": "vst-off-20261022-thz-003",
+          "household_id": "hh-thazhambur-004",
+          "patient_id": "pat-lakshmi-ravi",
+          "beneficiary_name": "Lakshmi Ravi (Postnatal Day 42)",
+          "encounter_type": "PNC_POSTNATAL_CHECKUP",
+          "audio_note_size_bytes": 51400,
+          "recorded_at": "2026-10-22T04:55:00Z"
+        }
+      ],
+      "reconnection_sync_flow": {
+        "batch_mutation": "sync_offline_field_visits",
+        "media_upload_bucket": "asha-field-media",
+        "telemetry_updates": {
+          "average_voice_doc_time_seconds": 91.2,
+          "manual_baseline_seconds": 480,
+          "doc_time_saved_percent": 81,
+          "sync_success_rate": 100,
+          "asr_confidence_score": 0.964
+        }
+      }
+    }
+  }
+}

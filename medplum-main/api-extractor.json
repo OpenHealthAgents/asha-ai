@@ -1,0 +1,60 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "mainEntryPointFilePath": "<projectFolder>/dist/types/index.d.ts",
+  "bundledPackages": [],
+  "compiler": {
+    "tsconfigFilePath": "<projectFolder>/tsconfig.json",
+    "skipLibCheck": true
+  },
+  "apiReport": {
+    "enabled": false
+  },
+  "docModel": {
+    "enabled": false
+  },
+  "dtsRollup": {
+    "enabled": true,
+    "untrimmedFilePath": "<projectFolder>/dist/types.d.ts"
+  },
+  "tsdocMetadata": {
+    "enabled": false
+  },
+  "messages": {
+    "compilerMessageReporting": {
+      "default": {
+        "logLevel": "error"
+      }
+    },
+    "extractorMessageReporting": {
+      "default": {
+        "logLevel": "error"
+      },
+      "ae-forgotten-export": {
+        "logLevel": "error"
+      },
+      "ae-incompatible-release-tags": {
+        "logLevel": "error"
+      },
+      "ae-internal-missing-underscore": {
+        "logLevel": "error"
+      },
+      "ae-internal-mixed-release-tag": {
+        "logLevel": "error"
+      },
+      "ae-unresolved-inheritdoc-reference": {
+        "logLevel": "error"
+      },
+      "ae-unresolved-inheritdoc-base": {
+        "logLevel": "error"
+      },
+      "ae-missing-release-tag": {
+        "logLevel": "none"
+      }
+    },
+    "tsdocMessageReporting": {
+      "default": {
+        "logLevel": "error"
+      }
+    }
+  }
+}

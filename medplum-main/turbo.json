@@ -1,0 +1,34 @@
+{
+  "$schema": "https://turborepo.org/schema.json",
+  "globalDependencies": ["api-extractor.json", "tsdoc.json"],
+  "globalEnv": ["NODE_VERSION", "MEDPLUM_GIT_SHORTHASH"],
+  "globalPassThroughEnv": ["TEST_MAX_WORKERS"],
+  "tasks": {
+    "clean": {
+      "outputs": ["build/**", "dist/**", "coverage/**"]
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["build/**", "dist/**", ".next/**", "!.next/cache/**"],
+      "env": [
+        "MEDPLUM_BASE_URL",
+        "MEDPLUM_CLIENT_ID",
+        "MEDPLUM_INTROSPECTION_URL",
+        "MEDPLUM_REGISTER_ENABLED",
+        "GOOGLE_CLIENT_ID",
+        "RECAPTCHA_SITE_KEY"
+      ]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "outputs": ["coverage/**", ".vitest-reports/**"],
+      "inputs": ["src/**/*.tsx", "src/**/*.ts"]
+    },
+    "lint": {
+      "dependsOn": ["build"]
+    },
+    "lint:fix": {
+      "dependsOn": ["build"]
+    }
+  }
+}

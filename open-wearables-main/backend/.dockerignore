@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+.coverage
+.pytest_cache/
+.ruff_cache/
+.claude/
+
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+
+*.log
+*.tmp
+*.bak
+
+# Local secrets. Without this a local build copies config/.env into the image.
+config/.env
+config/.env.*
+!config/.env.example

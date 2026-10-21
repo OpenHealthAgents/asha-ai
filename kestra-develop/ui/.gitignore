@@ -1,0 +1,10 @@
+playwright-report
+.vitest-reports
+test-results
+tests/.env
+tests/data/
+generated/
+packages/*/package-lock.json
+
+# module federation build files
+.__mf__temp

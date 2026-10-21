@@ -1,0 +1,2615 @@
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "StructureDefinition",
+        "id": "RuralHouseholdGroup",
+        "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/RuralHouseholdGroup",
+        "name": "RuralHouseholdGroup",
+        "title": "Rural Frontline Household Group Profile",
+        "status": "active",
+        "description": "Represents a rural household unit managed by an ASHA worker, linked via village LGD code and Head of Household.",
+        "fhirVersion": "4.0.1",
+        "kind": "resource",
+        "abstract": false,
+        "type": "Group",
+        "baseDefinition": "http://hl7.org/fhir/StructureDefinition/Group",
+        "derivation": "constraint"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "StructureDefinition/RuralHouseholdGroup"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "StructureDefinition",
+        "id": "AshaPatient",
+        "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/AshaPatient",
+        "name": "AshaPatient",
+        "title": "Frontline Patient Profile (ABHA + RCH + LGD Hierarchy)",
+        "status": "active",
+        "description": "Rural frontline patient profile tracked by ASHA/ANM workers, linked to ABDM ABHA ID, RCH portal, and village LGD codes.",
+        "fhirVersion": "4.0.1",
+        "kind": "resource",
+        "abstract": false,
+        "type": "Patient",
+        "baseDefinition": "http://hl7.org/fhir/StructureDefinition/Patient",
+        "derivation": "constraint"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "StructureDefinition/AshaPatient"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Questionnaire",
+        "id": "cbac-ncd-v1",
+        "url": "https://nhm.gov.in/fhir/r4/Questionnaire/CBAC-NCD-v1",
+        "name": "CBAC_NCD_V1",
+        "title": "Community Based Assessment Checklist (CBAC) for Early Detection of NCDs",
+        "status": "active",
+        "subjectType": [
+          "Patient"
+        ],
+        "description": "Government of India National NCD Screening Checklist administered by ASHA workers for individuals aged 30 and older.",
+        "item": [
+          {
+            "linkId": "part-a",
+            "text": "Part A: Risk Assessment (Scoring: 0 - 10)",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "cbac-age",
+                "text": "What is your age category?",
+                "type": "choice",
+                "required": true,
+                "answerOption": [
+                  {
+                    "valueCoding": {
+                      "code": "0",
+                      "display": "30-49 years (Score: 0)"
+                    }
+                  },
+                  {
+                    "valueCoding": {
+                      "code": "1",
+                      "display": "50-59 years (Score: 1)"
+                    }
+                  },
+                  {
+                    "valueCoding": {
+                      "code": "2",
+                      "display": "60 years or above (Score: 2)"
+                    }
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-tobacco",
+                "text": "Do you currently smoke or consume smokeless tobacco products (gutka/khaini)?",
+                "type": "choice",
+                "required": true,
+                "answerOption": [
+                  {
+                    "valueCoding": {
+                      "code": "0",
+                      "display": "Never (Score: 0)"
+                    }
+                  },
+                  {
+                    "valueCoding": {
+                      "code": "1",
+                      "display": "Used to in the past, but quit (Score: 1)"
+                    }
+                  },
+                  {
+                    "valueCoding": {
+                      "code": "2",
+                      "display": "Yes, daily or occasionally (Score: 2)"
+                    }
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-alcohol",
+                "text": "Do you consume alcohol daily or weekly?",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "cbac-waist",
+                "text": "Waist circumference in centimetres",
+                "type": "decimal",
+                "required": true
+              },
+              {
+                "linkId": "cbac-physical-activity",
+                "text": "Do you undertake at least 150 minutes of physical activity per week?",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "cbac-family-history",
+                "text": "Family history of High Blood Pressure, Diabetes or Heart Disease?",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "cbac-total-score",
+                "text": "Total CBAC Risk Score (Calculated 0 to 10; Score >= 4 requires immediate PHC referral)",
+                "type": "integer",
+                "required": true
+              }
+            ]
+          },
+          {
+            "linkId": "part-b",
+            "text": "Part B: Early Warning Signs & Cancer Screening",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "cbac-oral-signs",
+                "text": "Any white or red patch in the mouth, or non-healing mouth ulcer > 2 weeks?",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "cbac-breast-lump",
+                "text": "For women: Any palpable lump in breast, nipple retraction or discharge?",
+                "type": "boolean",
+                "required": false
+              },
+              {
+                "linkId": "cbac-cervical-bleeding",
+                "text": "For women: Bleeding between periods, post-coital bleeding, or post-menopausal bleeding?",
+                "type": "boolean",
+                "required": false
+              }
+            ]
+          },
+          {
+            "linkId": "part-c",
+            "text": "Part C: Elderly Care, Mobility & Vision Screening",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "cbac-vision-cataract",
+                "text": "Difficulty seeing distant objects or cloudy vision (suspected cataract)?",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "cbac-mobility-unsteady",
+                "text": "Unsteady walking or history of falls in the past 6 months?",
+                "type": "boolean",
+                "required": true
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Questionnaire/cbac-ncd-v1"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Questionnaire",
+        "id": "anc-highrisk-v1",
+        "url": "https://nhm.gov.in/fhir/r4/Questionnaire/ANC-HighRisk-v1",
+        "name": "ANC_HighRisk_V1",
+        "title": "Antenatal Care (ANC) High-Risk Maternal Screening Checklist",
+        "status": "active",
+        "subjectType": [
+          "Patient"
+        ],
+        "description": "Guidelines for identification and immediate PHC escalation of High-Risk Pregnancies (HRP) by ASHA and ANM workers.",
+        "item": [
+          {
+            "linkId": "anc-gestational-info",
+            "text": "Obstetric History & Gestational Timeline",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "anc-lmp",
+                "text": "Last Menstrual Period (LMP) Date",
+                "type": "date",
+                "required": true
+              },
+              {
+                "linkId": "anc-edd",
+                "text": "Expected Date of Delivery (EDD)",
+                "type": "date",
+                "required": true
+              },
+              {
+                "linkId": "anc-gestational-weeks",
+                "text": "Current Gestational Age (weeks)",
+                "type": "integer",
+                "required": true
+              },
+              {
+                "linkId": "anc-gravida",
+                "text": "Gravida (Total number of pregnancies)",
+                "type": "integer",
+                "required": true
+              },
+              {
+                "linkId": "anc-parity",
+                "text": "Parity (Total viable deliveries)",
+                "type": "integer",
+                "required": true
+              }
+            ]
+          },
+          {
+            "linkId": "anc-vitals-danger",
+            "text": "Clinical Danger Signs & Point-of-Care Vitals",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "anc-bp-systolic",
+                "text": "Systolic Blood Pressure (mmHg)",
+                "type": "integer",
+                "required": true
+              },
+              {
+                "linkId": "anc-bp-diastolic",
+                "text": "Diastolic Blood Pressure (mmHg)",
+                "type": "integer",
+                "required": true
+              },
+              {
+                "linkId": "anc-pre-eclampsia",
+                "text": "Severe Pre-eclampsia Alert (BP >= 140/90 with headache or blurred vision)",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "anc-hb",
+                "text": "Hemoglobin Level (g/dL)",
+                "type": "decimal",
+                "required": true
+              },
+              {
+                "linkId": "anc-severe-anemia",
+                "text": "Severe Anemia Alert (Hb < 7.0 g/dL requiring urgent iron sucrose infusion / transfusion)",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "anc-vaginal-bleeding",
+                "text": "Antepartum Hemorrhage / Active vaginal bleeding",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "anc-pedal-edema",
+                "text": "Severe bilateral pitting pedal edema or facial puffiness",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "anc-fetal-movement-reduced",
+                "text": "Reduced or absent fetal movements in last 12 hours",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "anc-previous-csection",
+                "text": "History of previous Cesarean Section or obstructed labour",
+                "type": "boolean",
+                "required": true
+              }
+            ]
+          },
+          {
+            "linkId": "anc-triage-outcome",
+            "text": "Triage & Referral Determination",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "anc-is-high-risk",
+                "text": "Is this a High-Risk Pregnancy (HRP) requiring urgent referral to PHC Medical Officer?",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "anc-referral-facility",
+                "text": "Designated Referral Health Facility (PHC / CHC / District Hospital)",
+                "type": "string",
+                "required": false
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Questionnaire/anc-highrisk-v1"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Questionnaire",
+        "id": "imnci-pediatric-triage-v1",
+        "url": "https://nhm.gov.in/fhir/r4/Questionnaire/IMNCI-Pediatric-Triage-v1",
+        "name": "IMNCI_Pediatric_Triage_V1",
+        "title": "Integrated Management of Neonatal & Childhood Illness (IMNCI) Triage Checklist",
+        "status": "active",
+        "subjectType": [
+          "Patient"
+        ],
+        "description": "National protocol for rapid assessment of acute pediatric infections, respiratory distress, dehydration, and severe malnutrition in rural children under 5.",
+        "item": [
+          {
+            "linkId": "imnci-general-danger",
+            "text": "General Danger Signs (Any YES = Immediate Emergency Referral)",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "imnci-unable-to-drink",
+                "text": "Child unable to breastfeed or drink liquids",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "imnci-vomits-everything",
+                "text": "Child vomits everything consumed",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "imnci-convulsions",
+                "text": "Child had convulsions or fits during this illness episode",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "imnci-lethargic-unconscious",
+                "text": "Child is abnormally sleepy, lethargic or unresponsive",
+                "type": "boolean",
+                "required": true
+              }
+            ]
+          },
+          {
+            "linkId": "imnci-respiratory-assessment",
+            "text": "Pneumonia & Respiratory Distress Assessment",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "imnci-cough-days",
+                "text": "Duration of cough or difficulty breathing (days)",
+                "type": "integer",
+                "required": true
+              },
+              {
+                "linkId": "imnci-respiratory-rate",
+                "text": "Respiratory Rate (breaths per minute counted for 60 seconds)",
+                "type": "integer",
+                "required": true
+              },
+              {
+                "linkId": "imnci-chest-indrawing",
+                "text": "Subcostal chest indrawing present in calm child",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "imnci-stridor",
+                "text": "Stridor heard while child is calm and resting",
+                "type": "boolean",
+                "required": true
+              }
+            ]
+          },
+          {
+            "linkId": "imnci-dehydration-malnutrition",
+            "text": "Diarrhea, Dehydration & Malnutrition Screening",
+            "type": "group",
+            "item": [
+              {
+                "linkId": "imnci-diarrhea-present",
+                "text": "Child has loose watery stools or diarrhea",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "imnci-sunken-eyes",
+                "text": "Sunken eyes present",
+                "type": "boolean",
+                "required": true
+              },
+              {
+                "linkId": "imnci-skin-pinch",
+                "text": "Abdominal skin pinch test",
+                "type": "choice",
+                "required": true,
+                "answerOption": [
+                  {
+                    "valueCoding": {
+                      "code": "NORMAL",
+                      "display": "Goes back immediately (< 1s)"
+                    }
+                  },
+                  {
+                    "valueCoding": {
+                      "code": "SLOW",
+                      "display": "Goes back slowly (1 - 2s)"
+                    }
+                  },
+                  {
+                    "valueCoding": {
+                      "code": "VERY_SLOW",
+                      "display": "Goes back very slowly (> 2s) - Severe Dehydration"
+                    }
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-muac",
+                "text": "Mid-Upper Arm Circumference (MUAC) in millimetres (< 115mm indicates Severe Acute Malnutrition)",
+                "type": "decimal",
+                "required": true
+              },
+              {
+                "linkId": "imnci-bilateral-edema",
+                "text": "Bilateral pitting edema of both feet (Kwashiorkor sign)",
+                "type": "boolean",
+                "required": true
+              }
+            ]
+          },
+          {
+            "linkId": "imnci-classification-outcome",
+            "text": "IMNCI Colour-Coded Triage Classification",
+            "type": "choice",
+            "required": true,
+            "answerOption": [
+              {
+                "valueCoding": {
+                  "code": "RED",
+                  "display": "RED: Severe Pneumonia / Dehydration / SAM - Emergency PHC Ambulance Referral"
+                }
+              },
+              {
+                "valueCoding": {
+                  "code": "YELLOW",
+                  "display": "YELLOW: Some Dehydration / Moderate Illness - Sub-centre ANM Oral Antibiotics / ORS"
+                }
+              },
+              {
+                "valueCoding": {
+                  "code": "GREEN",
+                  "display": "GREEN: No Pneumonia / Mild Cold - Home Care, Continued Breastfeeding & Zinc"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Questionnaire/imnci-pediatric-triage-v1"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "practitioner-asha-sunita",
+        "identifier": [
+          {
+            "system": "https://hpr.ndhm.gov.in",
+            "value": "HPR-ASHA-OR-215432"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Devi",
+            "given": [
+              "Sunita"
+            ]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+919876543210"
+          }
+        ],
+        "gender": "female"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Practitioner/practitioner-asha-sunita"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "RelatedPerson",
+        "id": "relperson-hh-head-ramesh",
+        "patient": {
+          "reference": "Patient/patient-asha-anita-patra"
+        },
+        "relationship": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode",
+                "code": "HUSB",
+                "display": "Husband / Head of Household"
+              }
+            ]
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Patra",
+            "given": [
+              "Ramesh"
+            ]
+          }
+        ],
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+919876500112"
+          }
+        ],
+        "gender": "male",
+        "address": [
+          {
+            "line": [
+              "House No. 42, Ward 3, Rampur Village"
+            ],
+            "city": "Bhadrak",
+            "district": "dist-bhadrak",
+            "state": "Odisha",
+            "postalCode": "756100",
+            "country": "India"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "RelatedPerson/relperson-hh-head-ramesh"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-asha-anita-patra",
+        "identifier": [
+          {
+            "system": "https://healthid.ndhm.gov.in",
+            "value": "91-8842-1094-5512"
+          },
+          {
+            "system": "https://abdm.gov.in/abha-address",
+            "value": "anita.patra@abdm"
+          },
+          {
+            "system": "https://rch.nhm.gov.in/rch/",
+            "value": "RCH-OR-215432-0941"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Patra",
+            "given": [
+              "Anita"
+            ]
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1998-05-14",
+        "telecom": [
+          {
+            "system": "phone",
+            "value": "+919876500112"
+          }
+        ],
+        "address": [
+          {
+            "use": "home",
+            "line": [
+              "House No. 42, Ward 3, Rampur"
+            ],
+            "city": "Bhadrak",
+            "state": "Odisha",
+            "postalCode": "756100"
+          }
+        ],
+        "extension": [
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/LgdHierarchy",
+            "extension": [
+              {
+                "url": "state_code",
+                "valueString": "OR"
+              },
+              {
+                "url": "district_code",
+                "valueString": "dist-bhadrak"
+              },
+              {
+                "url": "block_code",
+                "valueString": "blk-bhadrak"
+              },
+              {
+                "url": "phc_id",
+                "valueString": "phc-bhadrak-01"
+              },
+              {
+                "url": "subcentre_id",
+                "valueString": "sc-rampur-01"
+              },
+              {
+                "url": "village_lgd_code",
+                "valueString": "215432"
+              }
+            ]
+          },
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/AshaWorkerAssigned",
+            "valueReference": {
+              "reference": "Practitioner/practitioner-asha-sunita"
+            }
+          },
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/BplStatus",
+            "valueBoolean": true
+          },
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/HighRiskMaternalFlag",
+            "valueBoolean": true
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/patient-asha-anita-patra"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-asha-baby-aarav",
+        "identifier": [
+          {
+            "system": "https://healthid.ndhm.gov.in",
+            "value": "91-4412-9012-3321"
+          },
+          {
+            "system": "https://rch.nhm.gov.in/rch/",
+            "value": "RCH-OR-215432-0941-C1"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Patra",
+            "given": [
+              "Aarav"
+            ]
+          }
+        ],
+        "gender": "male",
+        "birthDate": "2026-08-15",
+        "extension": [
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/LgdHierarchy",
+            "extension": [
+              {
+                "url": "state_code",
+                "valueString": "OR"
+              },
+              {
+                "url": "district_code",
+                "valueString": "dist-bhadrak"
+              },
+              {
+                "url": "block_code",
+                "valueString": "blk-bhadrak"
+              },
+              {
+                "url": "phc_id",
+                "valueString": "phc-bhadrak-01"
+              },
+              {
+                "url": "subcentre_id",
+                "valueString": "sc-rampur-01"
+              },
+              {
+                "url": "village_lgd_code",
+                "valueString": "215432"
+              }
+            ]
+          },
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/AshaWorkerAssigned",
+            "valueReference": {
+              "reference": "Practitioner/practitioner-asha-sunita"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/patient-asha-baby-aarav"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-asha-ramesh-patra",
+        "identifier": [
+          {
+            "system": "https://healthid.ndhm.gov.in",
+            "value": "91-7712-4432-8871"
+          },
+          {
+            "system": "https://abdm.gov.in/abha-address",
+            "value": "ramesh.patra@abdm"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "family": "Patra",
+            "given": [
+              "Ramesh"
+            ]
+          }
+        ],
+        "gender": "male",
+        "birthDate": "1979-03-22",
+        "extension": [
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/LgdHierarchy",
+            "extension": [
+              {
+                "url": "state_code",
+                "valueString": "OR"
+              },
+              {
+                "url": "district_code",
+                "valueString": "dist-bhadrak"
+              },
+              {
+                "url": "block_code",
+                "valueString": "blk-bhadrak"
+              },
+              {
+                "url": "phc_id",
+                "valueString": "phc-bhadrak-01"
+              },
+              {
+                "url": "subcentre_id",
+                "valueString": "sc-rampur-01"
+              },
+              {
+                "url": "village_lgd_code",
+                "valueString": "215432"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/patient-asha-ramesh-patra"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Group",
+        "id": "group-household-rampur-042",
+        "type": "person",
+        "actual": true,
+        "name": "Rampur Household HH-215432-042 (Patra Family)",
+        "characteristic": [
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "https://lgdirectory.gov.in/village",
+                  "code": "village_lgd_code",
+                  "display": "Village LGD"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "coding": [
+                {
+                  "system": "https://lgdirectory.gov.in/village",
+                  "code": "215432",
+                  "display": "Rampur"
+                }
+              ]
+            },
+            "exclude": false
+          },
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "https://nhm.gov.in/subcentre",
+                  "code": "subcentre_id",
+                  "display": "Sub-Centre"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "coding": [
+                {
+                  "code": "sc-rampur-01",
+                  "display": "Rampur Sub-Centre"
+                }
+              ]
+            },
+            "exclude": false
+          },
+          {
+            "code": {
+              "coding": [
+                {
+                  "system": "https://nhm.gov.in/phc",
+                  "code": "phc_id",
+                  "display": "Primary Health Centre"
+                }
+              ]
+            },
+            "valueCodeableConcept": {
+              "coding": [
+                {
+                  "code": "phc-bhadrak-01",
+                  "display": "Bhadrak PHC"
+                }
+              ]
+            },
+            "exclude": false
+          }
+        ],
+        "extension": [
+          {
+            "url": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/HeadOfHousehold",
+            "valueReference": {
+              "reference": "RelatedPerson/relperson-hh-head-ramesh"
+            }
+          }
+        ],
+        "member": [
+          {
+            "entity": {
+              "reference": "Patient/patient-asha-anita-patra"
+            }
+          },
+          {
+            "entity": {
+              "reference": "Patient/patient-asha-baby-aarav"
+            }
+          },
+          {
+            "entity": {
+              "reference": "Patient/patient-asha-ramesh-patra"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Group/group-household-rampur-042"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "QuestionnaireResponse",
+        "id": "qr-cbac-ramesh-patra",
+        "questionnaire": "https://nhm.gov.in/fhir/r4/Questionnaire/CBAC-NCD-v1",
+        "status": "completed",
+        "subject": {
+          "reference": "Patient/patient-asha-ramesh-patra"
+        },
+        "author": {
+          "reference": "Practitioner/practitioner-asha-sunita"
+        },
+        "authored": "2026-10-18T10:30:00+05:30",
+        "item": [
+          {
+            "linkId": "part-a",
+            "item": [
+              {
+                "linkId": "cbac-age",
+                "answer": [
+                  {
+                    "valueCoding": {
+                      "code": "0",
+                      "display": "30-49 years"
+                    }
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-tobacco",
+                "answer": [
+                  {
+                    "valueCoding": {
+                      "code": "2",
+                      "display": "Yes, daily chewing"
+                    }
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-alcohol",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-waist",
+                "answer": [
+                  {
+                    "valueDecimal": 92.5
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-physical-activity",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-family-history",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-total-score",
+                "answer": [
+                  {
+                    "valueInteger": 5
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "part-b",
+            "item": [
+              {
+                "linkId": "cbac-oral-signs",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "part-c",
+            "item": [
+              {
+                "linkId": "cbac-vision-cataract",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "cbac-mobility-unsteady",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "QuestionnaireResponse/qr-cbac-ramesh-patra"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "QuestionnaireResponse",
+        "id": "qr-anc-anita-patra-visit3",
+        "questionnaire": "https://nhm.gov.in/fhir/r4/Questionnaire/ANC-HighRisk-v1",
+        "status": "completed",
+        "subject": {
+          "reference": "Patient/patient-asha-anita-patra"
+        },
+        "author": {
+          "reference": "Practitioner/practitioner-asha-sunita"
+        },
+        "authored": "2026-10-20T09:15:00+05:30",
+        "item": [
+          {
+            "linkId": "anc-gestational-info",
+            "item": [
+              {
+                "linkId": "anc-lmp",
+                "answer": [
+                  {
+                    "valueDate": "2026-03-10"
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-edd",
+                "answer": [
+                  {
+                    "valueDate": "2026-12-17"
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-gestational-weeks",
+                "answer": [
+                  {
+                    "valueInteger": 32
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-gravida",
+                "answer": [
+                  {
+                    "valueInteger": 2
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-parity",
+                "answer": [
+                  {
+                    "valueInteger": 1
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "anc-vitals-danger",
+            "item": [
+              {
+                "linkId": "anc-bp-systolic",
+                "answer": [
+                  {
+                    "valueInteger": 148
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-bp-diastolic",
+                "answer": [
+                  {
+                    "valueInteger": 96
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-pre-eclampsia",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-hb",
+                "answer": [
+                  {
+                    "valueDecimal": 6.8
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-severe-anemia",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-vaginal-bleeding",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-pedal-edema",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-fetal-movement-reduced",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-previous-csection",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "anc-triage-outcome",
+            "item": [
+              {
+                "linkId": "anc-is-high-risk",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              },
+              {
+                "linkId": "anc-referral-facility",
+                "answer": [
+                  {
+                    "valueString": "Bhadrak PHC (Medical Officer Emergency Triage)"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "QuestionnaireResponse/qr-anc-anita-patra-visit3"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "QuestionnaireResponse",
+        "id": "qr-imnci-aarav-triage",
+        "questionnaire": "https://nhm.gov.in/fhir/r4/Questionnaire/IMNCI-Pediatric-Triage-v1",
+        "status": "completed",
+        "subject": {
+          "reference": "Patient/patient-asha-baby-aarav"
+        },
+        "author": {
+          "reference": "Practitioner/practitioner-asha-sunita"
+        },
+        "authored": "2026-10-21T11:45:00+05:30",
+        "item": [
+          {
+            "linkId": "imnci-general-danger",
+            "item": [
+              {
+                "linkId": "imnci-unable-to-drink",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-vomits-everything",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-convulsions",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-lethargic-unconscious",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "imnci-respiratory-assessment",
+            "item": [
+              {
+                "linkId": "imnci-cough-days",
+                "answer": [
+                  {
+                    "valueInteger": 3
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-respiratory-rate",
+                "answer": [
+                  {
+                    "valueInteger": 54
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-chest-indrawing",
+                "answer": [
+                  {
+                    "valueBoolean": true
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-stridor",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "imnci-dehydration-malnutrition",
+            "item": [
+              {
+                "linkId": "imnci-diarrhea-present",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-sunken-eyes",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-skin-pinch",
+                "answer": [
+                  {
+                    "valueCoding": {
+                      "code": "NORMAL",
+                      "display": "Goes back immediately"
+                    }
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-muac",
+                "answer": [
+                  {
+                    "valueDecimal": 122
+                  }
+                ]
+              },
+              {
+                "linkId": "imnci-bilateral-edema",
+                "answer": [
+                  {
+                    "valueBoolean": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "linkId": "imnci-classification-outcome",
+            "answer": [
+              {
+                "valueCoding": {
+                  "code": "RED",
+                  "display": "RED: Severe Pneumonia with chest indrawing - Immediate PHC Emergency Referral & Oxygen"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "QuestionnaireResponse/qr-imnci-aarav-triage"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Immunization",
+        "id": "imm-aarav-bcg",
+        "status": "completed",
+        "vaccineCode": {
+          "coding": [
+            {
+              "system": "https://nhm.gov.in/nis/vaccines",
+              "code": "BCG",
+              "display": "Bacillus Calmette-Guerin"
+            }
+          ]
+        },
+        "patient": {
+          "reference": "Patient/patient-asha-baby-aarav"
+        },
+        "occurrenceDateTime": "2026-08-16T10:00:00+05:30",
+        "primarySource": true,
+        "performer": [
+          {
+            "actor": {
+              "reference": "Practitioner/practitioner-asha-sunita"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Immunization/imm-aarav-bcg"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "ImmunizationRecommendation",
+        "id": "recom-patient-asha-baby-aarav",
+        "patient": {
+          "reference": "Patient/patient-asha-baby-aarav"
+        },
+        "date": "2026-10-21T20:56:16.164Z",
+        "recommendation": [
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "BCG",
+                    "display": "Bacillus Calmette-Guerin (BCG)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "BCG"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-08-15"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "BCG"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "OPV-0",
+                    "display": "Oral Polio Vaccine Birth Dose (OPV-0)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "OPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-08-15"
+              }
+            ],
+            "doseNumberPositiveInt": 0,
+            "series": "OPV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "HepB-0",
+                    "display": "Hepatitis B Birth Dose"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "HepB"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-08-15"
+              }
+            ],
+            "doseNumberPositiveInt": 0,
+            "series": "HepB"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "PENTA-1",
+                    "display": "Pentavalent 1 (DPT + HepB + Hib)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Pentavalent"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-09-26"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "Pentavalent"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "OPV-1",
+                    "display": "Oral Polio Vaccine 1 (OPV-1)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "OPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-09-26"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "OPV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "ROTA-1",
+                    "display": "Rotavirus Vaccine 1"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Rotavirus"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-09-26"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "Rotavirus"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "fIPV-1",
+                    "display": "Fractional IPV 1"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "fIPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-09-26"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "fIPV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "PCV-1",
+                    "display": "Pneumococcal Conjugate Vaccine 1"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "PCV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-09-26"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "PCV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "PENTA-2",
+                    "display": "Pentavalent 2 (DPT + HepB + Hib)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Pentavalent"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-10-24"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "Pentavalent"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "OPV-2",
+                    "display": "Oral Polio Vaccine 2 (OPV-2)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "OPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-10-24"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "OPV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "ROTA-2",
+                    "display": "Rotavirus Vaccine 2"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Rotavirus"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-10-24"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "Rotavirus"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "PENTA-3",
+                    "display": "Pentavalent 3 (DPT + HepB + Hib)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Pentavalent"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-11-21"
+              }
+            ],
+            "doseNumberPositiveInt": 3,
+            "series": "Pentavalent"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "OPV-3",
+                    "display": "Oral Polio Vaccine 3 (OPV-3)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "OPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-11-21"
+              }
+            ],
+            "doseNumberPositiveInt": 3,
+            "series": "OPV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "ROTA-3",
+                    "display": "Rotavirus Vaccine 3"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Rotavirus"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-11-21"
+              }
+            ],
+            "doseNumberPositiveInt": 3,
+            "series": "Rotavirus"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "fIPV-2",
+                    "display": "Fractional IPV 2"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "fIPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-11-21"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "fIPV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "PCV-2",
+                    "display": "Pneumococcal Conjugate Vaccine 2"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "PCV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-11-21"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "PCV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "MR-1",
+                    "display": "Measles-Rubella 1"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "MR"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-05-15"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "MR"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "JE-1",
+                    "display": "Japanese Encephalitis 1 (Endemic districts)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "JE"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-05-15"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "JE"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "PCV-BOOSTER",
+                    "display": "Pneumococcal Conjugate Booster"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "PCV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-05-15"
+              }
+            ],
+            "doseNumberPositiveInt": 3,
+            "series": "PCV"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "VITA-1",
+                    "display": "Vitamin A First Dose (1 Lakh IU)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "VitaminA"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-05-15"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "VitaminA"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "MR-2",
+                    "display": "Measles-Rubella 2"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "MR"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-12-11"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "MR"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "DPT-BOOSTER-1",
+                    "display": "DPT First Booster"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "DPT"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-12-11"
+              }
+            ],
+            "doseNumberPositiveInt": 4,
+            "series": "DPT"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "OPV-BOOSTER",
+                    "display": "OPV Booster"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "OPV"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2027-12-11"
+              }
+            ],
+            "doseNumberPositiveInt": 4,
+            "series": "OPV"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "ImmunizationRecommendation/recom-patient-asha-baby-aarav"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "ImmunizationRecommendation",
+        "id": "recom-patient-asha-anita-patra",
+        "patient": {
+          "reference": "Patient/patient-asha-anita-patra"
+        },
+        "date": "2026-10-21T20:56:16.164Z",
+        "recommendation": [
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "TD-1",
+                    "display": "Tetanus-Diphtheria Toxoid (Td-1) in Pregnancy"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Td-Maternal"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-03-10"
+              }
+            ],
+            "doseNumberPositiveInt": 1,
+            "series": "Td-Maternal"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "TD-2",
+                    "display": "Tetanus-Diphtheria Toxoid (Td-2) in Pregnancy (4 wks after Td-1)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Td-Maternal"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-04-07"
+              }
+            ],
+            "doseNumberPositiveInt": 2,
+            "series": "Td-Maternal"
+          },
+          {
+            "vaccineCode": [
+              {
+                "coding": [
+                  {
+                    "system": "https://nhm.gov.in/nis/vaccines",
+                    "code": "TD-BOOSTER",
+                    "display": "Td Booster (if vaccinated in last 3 years)"
+                  }
+                ]
+              }
+            ],
+            "targetDisease": {
+              "coding": [
+                {
+                  "system": "http://hl7.org/fhir/sid/icd-10",
+                  "code": "Td-Maternal"
+                }
+              ]
+            },
+            "forecastStatus": {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/immunization-recommendation-status",
+                  "code": "due",
+                  "display": "Due"
+                }
+              ]
+            },
+            "dateCriterion": [
+              {
+                "code": {
+                  "coding": [
+                    {
+                      "system": "http://loinc.org",
+                      "code": "30980-7",
+                      "display": "Date vaccine due"
+                    }
+                  ]
+                },
+                "value": "2026-03-10"
+              }
+            ],
+            "doseNumberPositiveInt": 3,
+            "series": "Td-Maternal"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "ImmunizationRecommendation/recom-patient-asha-anita-patra"
+      }
+    }
+  ]
+}

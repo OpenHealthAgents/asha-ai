@@ -1,0 +1,117 @@
+<template>
+    <div class="trigger">
+        <span v-for="trigger in triggers" :key="uid(trigger)" :id="uid(trigger)" class="trigger-icon" @click.stop>
+            <template v-if="trigger.disabled === undefined || trigger.disabled === false">
+                <KsPopover
+                    placement="left"
+                    :persistent="true"
+                    :title="`${$t('trigger details')}: ${trigger ? trigger.id : ''}`"
+                    :width="500"
+                    :showArrow="true"
+                    :popperOptions="{strategy: 'fixed'}"
+                    transition=""
+                    :hideAfter="0"
+                >
+                    <template #reference>
+                        <TaskIcon :onlyIcon="true" :cls="trigger?.type" :loadIcon="pluginsStore.loadIcon" />
+                    </template>
+                    <template #default>
+                        <div class="trigger-details" data-test="trigger-details">
+                            <TriggerVars :data="trigger" :execution="execution" @on-copy="copyLink(trigger)" />
+                        </div>
+                    </template>
+                </KsPopover>
+            </template>
+        </span>
+    </div>
+</template>
+<script setup lang="ts">
+    import {computed} from "vue"
+    import {usePluginsStore} from "../../stores/plugins"
+    import * as Utils from "../../utils/utils"
+    import {webhookUrl, WEBHOOK_TRIGGER_TYPES} from "../../utils/webhook"
+    import TriggerVars from "./TriggerVars.vue"
+    import TaskIcon from "../plugins/TaskIcon.vue"
+    import {useI18n} from "vue-i18n"
+    import {useToast} from "../../utils/toast"
+    import {Execution} from "../../stores/executions"
+
+    interface Flow {
+        namespace: string;
+        id: string;
+        triggers?: Trigger[];
+    }
+
+    interface Trigger {
+        id: string;
+        type: string;
+        key?: string;
+        disabled?: boolean;
+        [key: string]: unknown;
+    }
+
+    const props = defineProps<{
+        flow?: Flow;
+        execution?: Execution;
+        triggerId?: string;
+    }>()
+
+    const pluginsStore = usePluginsStore()
+
+    const triggers = computed<Trigger[]>(() => {
+        if (props.flow && props.flow.triggers) {
+            return props.flow.triggers.filter(
+                (trigger) => props.triggerId === undefined || props.triggerId === trigger.id,
+            )
+        } else if (props.execution && props.execution.trigger) {
+            return [props.execution.trigger]
+        } else {
+            return []
+        }
+    })
+
+    function uid(trigger: Trigger): string {
+        return (props.flow ? props.flow.namespace + "-" + props.flow.id : props.execution?.id) + "-" + trigger.id
+    }
+
+    const {t} = useI18n()
+    const toast = useToast()
+
+    async function copyLink(trigger: Trigger) {
+        if (WEBHOOK_TRIGGER_TYPES.includes(trigger.type) && trigger.key && props.flow) {
+            const url = webhookUrl({namespace: props.flow.namespace, id: props.flow.id, key: trigger.key})
+            try {
+                await Utils.copy(url)
+                toast.success(t("webhook link copied"))
+            } catch (error) {
+                console.error(error)
+            }
+        }
+    }
+</script>
+
+<style scoped>
+    .trigger {
+        max-width: 180px;
+        display: flex;
+        justify-content: center;
+    }
+
+    .trigger-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--ks-font-size-lg);
+        height: var(--ks-font-size-lg);
+        margin-right: var(--ks-spacing-1);
+        cursor: default;
+    }
+
+    .trigger-details {
+        max-height: calc(
+            100dvh - 2 * var(--ks-spacing-4) - 2 * var(--kel-popover-padding) -
+            var(--kel-popover-title-font-size) - var(--ks-spacing-3) - 2 * var(--ks-border-width-thin)
+        );
+        overflow-y: auto;
+    }
+</style>

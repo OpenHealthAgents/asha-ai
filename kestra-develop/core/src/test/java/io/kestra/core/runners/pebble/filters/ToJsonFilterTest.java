@@ -1,0 +1,108 @@
+package io.kestra.core.runners.pebble.filters;
+
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.junit.jupiter.api.Test;
+
+import com.google.common.collect.ImmutableMap;
+
+import io.kestra.core.exceptions.IllegalVariableEvaluationException;
+import io.kestra.core.junit.annotations.KestraTest;
+import io.kestra.core.runners.VariableRenderer;
+
+import jakarta.inject.Inject;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+@KestraTest
+class ToJsonFilterTest {
+    @Inject
+    VariableRenderer variableRenderer;
+
+    @Test
+    void toJsonFilter() throws IllegalVariableEvaluationException {
+        ZonedDateTime date = ZonedDateTime.parse("2013-09-08T16:19:00+02").withZoneSameLocal(ZoneId.systemDefault());
+
+        ImmutableMap<String, Object> vars = ImmutableMap.of(
+            "vars", ImmutableMap.of(
+                "second", Map.of(
+                    "string", "string",
+                    "int", 1,
+                    "float", 1.123F,
+                    "list", Arrays.asList(
+                        "string",
+                        1,
+                        1.123F
+                    ),
+                    "bool", true,
+                    "date", date,
+                    "map", Map.of(
+                        "string", "string",
+                        "int", 1,
+                        "float", 1.123F
+                    )
+                )
+            )
+        );
+
+        String render = variableRenderer.render("{{ vars.second.string | toJson }}", vars);
+        assertThat(render).isEqualTo("\"string\"");
+
+        render = variableRenderer.render("{{ vars.second.int | toJson }}", vars);
+        assertThat(render).isEqualTo("1");
+
+        render = variableRenderer.render("{{ vars.second.float | toJson }}", vars);
+        assertThat(render).isEqualTo("1.123");
+
+        render = variableRenderer.render("{{ vars.second.list | toJson }}", vars);
+        assertThat(render).isEqualTo("[\"string\",1,1.123]");
+
+        render = variableRenderer.render("{{ vars.second.bool | toJson }}", vars);
+        assertThat(render).isEqualTo("true");
+
+        render = variableRenderer.render("{{ vars.second.date | toJson }}", vars);
+        assertThat(ZonedDateTime.parse(render.substring(1, render.length() - 1)).toInstant())
+            .isEqualTo(date.toInstant());
+
+        render = variableRenderer.render("{{ vars.second.map | toJson }}", vars);
+        assertThat(render).contains("\"int\":1");
+        assertThat(render).contains("\"int\":1");
+        assertThat(render).contains("\"float\":1.123");
+        assertThat(render).contains("\"string\":\"string\"");
+        assertThat(render).startsWith("{");
+        assertThat(render).endsWith("}");
+
+        render = variableRenderer.render("{{ {\"empty_object\":{}} | toJson }}", Map.of());
+        assertThat(render).isEqualTo("{\"empty_object\":{}}");
+
+        render = variableRenderer.render("{{ null | toJson }}", Map.of());
+        assertThat(render).isEqualTo("null");
+    }
+
+    @Test
+    void shouldKeepNullMapContentWhenIncludeNullsIsTrue() throws IllegalVariableEvaluationException {
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("a", 1);
+        record.put("b", null);
+        Map<String, Object> vars = Map.of("records", List.of(record));
+
+        assertThat(variableRenderer.render("{{ records | toJson }}", vars))
+            .isEqualTo("[{\"a\":1}]");
+
+        assertThat(variableRenderer.render("{{ records | toJson(includeNulls=true) }}", vars))
+            .isEqualTo("[{\"a\":1,\"b\":null}]");
+    }
+
+    @Test
+    void exception() {
+        assertThrows(IllegalVariableEvaluationException.class, () -> variableRenderer.render("{{ | toJson }}", Map.of()));
+
+        assertThrows(IllegalVariableEvaluationException.class, () -> variableRenderer.render("{{ {not: json} | toJson }}", Map.of()));
+    }
+}

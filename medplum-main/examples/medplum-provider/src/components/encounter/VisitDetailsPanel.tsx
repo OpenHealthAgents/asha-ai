@@ -1,0 +1,118 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { Card, Stack, Text } from '@mantine/core';
+import type { PatchOperation } from '@medplum/core';
+import { createReference } from '@medplum/core';
+import type { Encounter, Location, Organization, Practitioner, Reference } from '@medplum/fhirtypes';
+import { DateTimeInput, ResourceInput } from '@medplum/react';
+import type { JSX } from 'react';
+import { BILLING_ORGANIZATION_IDENTIFIER } from '../../utils/billing';
+import { BillingOrganizationOption } from '../billing/BillingOrganizationOption';
+import { ServiceFacilityOption } from '../billing/ServiceFacilityOption';
+
+interface VisitDetailsPanelProps {
+  practitioner?: Practitioner;
+  encounter: Encounter;
+  billingOrganization?: Reference<Organization>;
+  onEncounterChange: (ops: PatchOperation[]) => void;
+  onBillingOrganizationChange: (organization: Organization | undefined) => void;
+}
+
+export const VisitDetailsPanel = (props: VisitDetailsPanelProps): JSX.Element => {
+  const { practitioner, encounter, billingOrganization, onEncounterChange, onBillingOrganizationChange } = props;
+
+  const handlePractitionerChange = async (practitioner: Practitioner | undefined): Promise<void> => {
+    if (!encounter || !practitioner) {
+      return;
+    }
+
+    onEncounterChange([{ op: 'add', path: '/participant', value: [{ individual: createReference(practitioner) }] }]);
+  };
+
+  // Clearing the picker removes the whole location list; BillingTab drops the remove when there is none.
+  const handleServiceFacilityChange = (location: Location | undefined): void => {
+    if (!location) {
+      onEncounterChange([{ op: 'remove', path: '/location' }]);
+      return;
+    }
+    onEncounterChange([{ op: 'add', path: '/location', value: [{ location: createReference(location) }] }]);
+  };
+
+  const handleCheckinChange = async (checkin: string): Promise<void> => {
+    if (!encounter || !checkin) {
+      return;
+    }
+
+    onEncounterChange([{ op: 'add', path: '/period/start', value: checkin }]);
+  };
+
+  const handleCheckoutChange = async (checkout: string): Promise<void> => {
+    if (!encounter || !checkout) {
+      return;
+    }
+
+    onEncounterChange([{ op: 'add', path: '/period/end', value: checkout }]);
+  };
+
+  return (
+    <Stack gap={0}>
+      <Text fw={600} size="lg" mb="md">
+        Visit Details
+      </Text>
+      <Card withBorder shadow="sm" p="md">
+        <Stack gap="md">
+          <ResourceInput
+            resourceType="Practitioner"
+            name="practitioner"
+            label="Practitioner"
+            placeholder="Search for practitioner"
+            defaultValue={practitioner}
+            onChange={handlePractitionerChange}
+          />
+
+          {/* ResourceInput is uncontrolled; remount when the async-resolved default arrives */}
+          <ResourceInput<Organization>
+            key={billingOrganization?.reference ?? 'no-billing-organization'}
+            resourceType="Organization"
+            name="billingOrganization"
+            label="Billing organization"
+            placeholder="Search for organization"
+            defaultValue={billingOrganization}
+            searchCriteria={{ identifier: BILLING_ORGANIZATION_IDENTIFIER }}
+            itemComponent={BillingOrganizationOption}
+            onChange={onBillingOrganizationChange}
+          />
+
+          <Stack gap={4}>
+            <ResourceInput<Location>
+              resourceType="Location"
+              name="serviceFacility"
+              label="Service facility"
+              placeholder="Search for location"
+              defaultValue={encounter.location?.[0]?.location}
+              itemComponent={ServiceFacilityOption}
+              onChange={handleServiceFacilityChange}
+            />
+            <Text size="xs" c="dimmed">
+              Defaults to the billing organization when empty.
+            </Text>
+          </Stack>
+
+          <DateTimeInput
+            name="checkin"
+            label="Check in"
+            defaultValue={encounter.period?.start}
+            onChange={handleCheckinChange}
+          />
+
+          <DateTimeInput
+            name="checkout"
+            label="Check out"
+            defaultValue={encounter.period?.end}
+            onChange={handleCheckoutChange}
+          />
+        </Stack>
+      </Card>
+    </Stack>
+  );
+};

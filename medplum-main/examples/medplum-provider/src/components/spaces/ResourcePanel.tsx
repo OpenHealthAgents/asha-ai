@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { Box, Text } from '@mantine/core';
+import type { Patient, Reference, Resource } from '@medplum/fhirtypes';
+import {
+  createPharmaciesSection,
+  getDefaultSections,
+  PatientSummary,
+  ResourceTable,
+  useResource,
+} from '@medplum/react';
+import type { JSX } from 'react';
+import { usePatientActionsMenu } from '../../pages/patient/usePatientActionsMenu';
+import { EncounterChart } from '../encounter/EncounterChart';
+import { LabOrderDetails } from '../labs/LabOrderDetails';
+import { LabResultDetails } from '../labs/LabResultDetails';
+import { usePharmacyDialog } from '../pharmacy/usePharmacyDialog';
+import { TaskDetailPanel } from '../tasks/TaskDetailPanel';
+
+interface ResourcePanelProps<T extends Resource = Resource> {
+  resource: Reference<T> | T;
+}
+
+export function ResourcePanel<T extends Resource = Resource>(props: ResourcePanelProps<T>): JSX.Element | null {
+  const { resource } = props;
+  const displayResource = useResource(resource);
+  const PharmacyDialogComponent = usePharmacyDialog();
+  const patientForActions = displayResource?.resourceType === 'Patient' ? (displayResource as Patient) : undefined;
+  const { headerMenuItems, actionsModals, openEditModal } = usePatientActionsMenu(patientForActions);
+
+  const sections = getDefaultSections().map((s) =>
+    s.key === 'pharmacies' ? createPharmaciesSection(PharmacyDialogComponent) : s
+  );
+
+  const renderResourceContent = (): JSX.Element => {
+    if (!displayResource) {
+      return <Text c="dimmed">Loading resource...</Text>;
+    }
+
+    switch (displayResource.resourceType) {
+      case 'Patient':
+        return (
+          <>
+            <PatientSummary
+              patient={displayResource}
+              sections={sections}
+              headerMenuItems={headerMenuItems}
+              headerLink={displayResource}
+              onEditPatient={openEditModal}
+            />
+            {actionsModals}
+          </>
+        );
+      case 'Task':
+        return <TaskDetailPanel task={displayResource} />;
+      case 'DiagnosticReport':
+        return <LabResultDetails result={displayResource} />;
+      case 'ServiceRequest':
+        return <LabOrderDetails order={displayResource} />;
+      case 'Encounter':
+        return <EncounterChart encounter={displayResource} />;
+      default:
+        return <ResourceTable value={displayResource} />;
+    }
+  };
+
+  return (
+    <Box
+      p="md"
+      mih="100%"
+      bg="light-dark(var(--mantine-color-white), var(--mantine-color-body))"
+      data-testid="resource-panel"
+    >
+      {renderResourceContent()}
+    </Box>
+  );
+}

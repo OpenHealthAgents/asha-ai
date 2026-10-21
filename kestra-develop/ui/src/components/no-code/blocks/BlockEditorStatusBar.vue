@@ -1,0 +1,162 @@
+<template>
+    <BlockShortcutsDialog
+        :open="shortcutsOpen"
+        :groups="shortcutGroups"
+        @update:open="(open: boolean) => emit('update:shortcutsOpen', open)"
+    />
+
+    <button
+        type="button"
+        class="block-editor-help"
+        :aria-label="$t('block_editor.shortcuts.title')"
+        :title="$t('block_editor.shortcuts.title')"
+        data-test="block-editor-help"
+        @click="emit('update:shortcutsOpen', true)"
+    >
+        <Keyboard class="block-editor-help-ico" />
+        <kbd class="block-editor-help-kbd">?</kbd>
+    </button>
+
+    <div v-if="!shortcutsOpen" class="block-editor-footer" role="status" data-test="block-editor-footer">
+        <span class="block-editor-footer-context">{{ footerContext }}</span>
+        <span v-for="hint in footerHints" :key="hint.id" class="block-editor-footer-hint">
+            <kbd v-for="key in displayKeys(hint.keys)" :key="key">{{ key }}</kbd>
+            {{ $t(hint.i18nKey) }}
+        </span>
+    </div>
+
+    <UndoToast
+        :state="undoState"
+        style="--undo-toast-offset: calc(var(--status-bar-height) + var(--ks-spacing-3))"
+        @undo="emit('undo')"
+    />
+</template>
+
+<script setup lang="ts">
+    import Keyboard from "vue-material-design-icons/Keyboard.vue"
+    import {displayKeys, type FooterHint} from "./shortcutHints"
+    import type {BlockEditorKeyBinding, BlockEditorKeymapGroup} from "./keymap"
+    import UndoToast from "./UndoToast.vue"
+    import BlockShortcutsDialog from "./BlockShortcutsDialog.vue"
+
+    defineProps<{
+        shortcutsOpen: boolean
+        shortcutGroups: {group: BlockEditorKeymapGroup; bindings: BlockEditorKeyBinding[]}[]
+        footerContext: string
+        footerHints: FooterHint[]
+        undoState: {label: string} | null
+    }>()
+
+    const emit = defineEmits<{
+        "update:shortcutsOpen": [open: boolean]
+        undo: []
+    }>()
+
+</script>
+
+<style scoped>
+    .block-editor-footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 9;
+        display: flex;
+        align-items: center;
+        gap: var(--ks-spacing-4);
+        height: var(--status-bar-height);
+        padding: 0 var(--ks-spacing-4);
+        background: var(--ks-bg-surface);
+        border-top: 1px solid var(--ks-border-subtle);
+        font-size: var(--ks-font-size-xs);
+        color: var(--ks-text-secondary);
+        overflow: hidden;
+    }
+
+    .block-editor-footer::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: var(--ks-spacing-8);
+        background: linear-gradient(to right, transparent, var(--ks-bg-surface));
+        pointer-events: none;
+    }
+
+    .block-editor-footer-context {
+        margin-right: auto;
+        flex-shrink: 1;
+        color: var(--ks-text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .block-editor-footer-hint {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--ks-spacing-1);
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .block-editor-footer-hint kbd {
+        font-family: var(--ks-font-family-mono);
+        font-size: var(--ks-font-size-xs);
+        background: var(--ks-bg-tag-inactive);
+        border: 1px solid var(--ks-border-subtle);
+        border-radius: var(--ks-radius-sm);
+        padding: 1px var(--ks-spacing-1);
+        min-width: 18px;
+        text-align: center;
+        color: var(--ks-text-secondary);
+    }
+
+    .block-editor-help {
+        position: absolute;
+        right: var(--ks-spacing-4);
+        bottom: calc(var(--status-bar-height) + var(--ks-spacing-3));
+        z-index: 10;
+        display: inline-flex;
+        align-items: center;
+        gap: var(--ks-spacing-2);
+        padding: var(--ks-spacing-1) var(--ks-spacing-2);
+        background: var(--ks-bg-elevated);
+        border: 1px solid var(--ks-border-default);
+        border-radius: var(--ks-radius-lg);
+        box-shadow: var(--ks-shadow-sm);
+        color: var(--ks-text-secondary);
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+    }
+
+    .block-editor-help:hover {
+        color: var(--ks-text-primary);
+        border-color: var(--ks-border-strong);
+        background: var(--ks-bg-surface);
+    }
+
+    .block-editor-help:focus-visible {
+        outline: 2px solid var(--ks-border-focus);
+        outline-offset: 2px;
+    }
+
+    .block-editor-help-ico {
+        display: flex;
+        font-size: 1rem;
+    }
+
+    .block-editor-help-kbd {
+        font-family: var(--ks-font-family-mono);
+        font-size: var(--ks-font-size-xs);
+        background: var(--ks-bg-tag-inactive);
+        border: 1px solid var(--ks-border-subtle);
+        border-radius: var(--ks-radius-sm);
+        padding: 1px var(--ks-spacing-1);
+        min-width: 18px;
+        text-align: center;
+        color: var(--ks-text-secondary);
+    }
+
+</style>

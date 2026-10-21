@@ -1,0 +1,199 @@
+<template>
+    <div class="wrapper" :class="{'wrapper--toggle': hasToggle, 'wrapper--boolean': schema?.type === 'boolean'}">
+        <KsDatePicker
+            v-if="!pebble && schema?.format === 'date-time'"
+            :modelValue="typeof modelValue === 'string' ? modelValue : undefined"
+            type="date"
+            :placeholder="$t('no_code.choose_placeholder', {field: root || 'date'})"
+            @update:model-value="(v: Date | string | null | undefined) => onInput(v instanceof Date ? v.toISOString() : '')"
+        />
+        <TaskDuration
+            v-if="!pebble && schema?.format === 'duration'"
+            :modelValue="typeof modelValue === 'string' ? modelValue : undefined"
+            class="duration-field"
+            @update:model-value="onInput"
+        />
+        <TaskBoolean
+            v-if="!pebble && schema?.type === 'boolean'"
+            :modelValue="typeof modelValue === 'boolean' ? modelValue : undefined"
+            class="boolean-field"
+            @update:model-value="onInput"
+        />
+        <InputText
+            v-if="disabled"
+            :modelValue="String(modelValue ?? '')"
+            disabled
+            class="w-100 disabled-field"
+        />
+        <KsEditor
+            v-else-if="pebble || (!schema?.format && schema?.type !== 'boolean')"
+            ref="editorRef"
+            class="string-editor"
+            v-bind="editorBindings"
+            :modelValue="editorValue"
+            :navbar="false"
+            :options="{fullHeight: false, largeSuggestions: false}"
+            schemaType="flow"
+            :lang="`${editorLanguage}-pebble`"
+            :placeholder="placeholder"
+            inline
+            @update:model-value="onInput"
+            @save="saveFlow"
+            @focus="onFocus"
+            style="z-index: 1;"
+        />
+    </div>
+</template>
+
+<script lang="ts" setup>
+    import {computed, inject, onMounted, ref} from "vue"
+    import {durationUtils, KsEditor, type KsEditorExposes} from "@kestra-io/design-system"
+    import {useEditorBindings} from "../../../../composables/useEditorBindings"
+    import {useFocusedExpressionEditor} from "./useFocusedExpressionEditor"
+    import InputText from "../inputs/InputText.vue"
+    import TaskDuration from "./TaskDuration.vue"
+    import TaskBoolean from "./TaskBoolean.vue"
+    import {Schema} from "./getTaskComponent"
+    import {SAVE_FLOW_FUNCTION_INJECTION_KEY} from "../../injectionKeys"
+
+    defineOptions({inheritAttrs: false})
+
+    const editorBindings = useEditorBindings()
+
+    // Monaco binds Ctrl/Cmd+S itself, so the field swallows the shortcut before the editor
+    // shell ever sees it — without this the whole form silently ignores it.
+    const saveFlow = inject(SAVE_FLOW_FUNCTION_INJECTION_KEY, () => {})
+
+    const editorRef = ref<KsEditorExposes>()
+    const {onFocus} = useFocusedExpressionEditor(editorRef)
+
+    const props = defineProps<{
+        disabled?: boolean;
+        modelValue?: string | boolean;
+        schema?: Schema;
+        root?: string;
+        task?: Record<string, unknown>;
+    }>()
+
+    const emit = defineEmits<{
+        (e: "update:modelValue", value: string | boolean | undefined): void;
+    }>()
+
+    const pebble = defineModel<boolean>("pebble", {default: false})
+
+    const hasToggle = computed(() =>
+        ["duration", "date-time"].includes(props.schema?.format ?? ""),
+    )
+
+    const editorLanguage = computed(() => {
+        return props.schema?.$language ?? "plaintext"
+    })
+
+    const values = computed(() => {
+        if (props.modelValue === undefined) {
+            return props.schema?.default
+        }
+
+        return props.modelValue
+    })
+
+    onMounted(() => {
+        const schema = props.schema
+        if (!schema) return
+
+        if (!["duration", "date-time"].includes(schema.format ?? "") || !props.modelValue) {
+            pebble.value = false
+        } else if (schema.format === "duration" && values.value) {
+            pebble.value = !durationUtils.isValidDuration(props.modelValue as string)
+        } else if (schema.format === "date-time" && values.value) {
+            pebble.value = isNaN(Date.parse(props.modelValue as string))
+        }
+    })
+
+    const buffer = ref<string>()
+
+    function onInput(value: string | boolean | null | undefined) {
+        if (typeof value === "string") {
+            buffer.value = value
+            emit("update:modelValue", value.trimEnd())
+            return
+        }
+
+        buffer.value = undefined
+        emit("update:modelValue", value ?? undefined)
+    }
+
+    const editorValue = computed(() => {
+        if (typeof props.modelValue !== "string") return undefined
+
+        return buffer.value?.trimEnd() === props.modelValue ? buffer.value : props.modelValue
+    })
+
+    const placeholder = computed(() => props.root?.split(".").pop() ?? "")
+
+</script>
+
+<style scoped>
+:deep(.placeholder) {
+    top: -7px !important;
+}
+
+.wrapper {
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    border-radius: var(--ks-radius-base);
+    border: 1px solid var(--ks-border-default);
+    overflow: hidden;
+    width: 100%;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+
+    & :deep(.disabled-field) {
+        margin: 0!important;
+        border-radius: 4px;
+    }
+
+    & :deep(.ks-editor){
+        flex: 1;
+    }
+}
+
+.wrapper:not(.wrapper--toggle) :deep(.kel-input__wrapper),
+.wrapper:not(.wrapper--toggle) :deep(.editor-container) {
+    box-shadow: none;
+}
+
+.wrapper:not(.wrapper--toggle):focus-within {
+    border-color: var(--ks-border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ks-border-focus) 22%, transparent);
+}
+
+.wrapper--boolean {
+    border: none;
+    overflow: visible;
+    justify-content: flex-start;
+    align-items: center;
+}
+
+.wrapper--toggle {
+    border: none;
+    overflow: visible;
+    align-items: flex-start;
+    gap: var(--ks-spacing-2);
+}
+
+.wrapper--toggle > * {
+    flex: 1;
+    min-width: 0;
+}
+
+.wrapper--toggle > .string-editor {
+    border-radius: var(--ks-radius-base);
+    transition: box-shadow 0.12s ease;
+}
+
+.wrapper--toggle > .string-editor:focus-within {
+    --ks-editor-single-line-border-color: var(--ks-border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ks-border-focus) 22%, transparent);
+}
+</style>

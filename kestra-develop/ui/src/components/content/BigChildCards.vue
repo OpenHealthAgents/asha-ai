@@ -1,0 +1,87 @@
+
+<template>
+    <h2 class="big-title">
+        {{ title }}
+    </h2>
+    <div class="big-card-grid">
+        <ContextDocsLink :href="item.path" class="big-card" v-for="item in protectedNavigation" :key="item.path">
+            <h4 class="card-title">
+                {{ item.title }}
+            </h4>
+            <p class="card-text">
+                {{ item.description }}
+            </p>
+        </ContextDocsLink>
+    </div>
+</template>
+
+<script setup lang="ts">
+    import {computed} from "vue"
+    import {useDocStore} from "../../stores/doc"
+    import ContextDocsLink from "../docs/ContextDocsLink.vue"
+
+    interface ChildMetadata {
+        title?: string
+        description?: string
+    }
+
+    const docStore = useDocStore()
+
+    const props = defineProps<{
+        directory: string
+        title: string
+    }>()
+
+    let navigation = await docStore.children(props.directory) as Record<string, ChildMetadata>
+
+    // avoid null values in navigation
+    const protectedNavigation = computed(() => {
+        return Object.entries(navigation ?? {})
+            .filter(a => a[1] && a[1].title && a[1].description && a[0] !== props.directory.slice(1))
+            .map(a => ({
+                path: a[0],
+                title: a[1].title,
+                description: a[1].description,
+            }))
+    })
+</script>
+
+<style scoped>
+.big-card-grid{
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+h2.big-title {
+    padding: 0;
+    font-size: var(--ks-font-size-xl);
+    border: none;
+    margin-top: 3rem;
+    margin-bottom: 1rem;
+    font-weight: 400;
+}
+
+.big-card{
+    border-radius: 0.5rem;
+    text-decoration: none;
+    background: linear-gradient(180deg, var(--ks-bg-elevated) 0%, var(--ks-bg-base) 100%);
+    color: var(--ks-text-primary);
+    border: 1px solid var(--ks-border-default);
+    transition: all 0.3s;
+    padding: 1rem;
+    h4.card-title {
+        padding-top: 0;
+        font-size: var(--ks-font-size-2xl);
+        font-weight: normal;
+    }
+    p.card-text{
+        font-size: var(--ks-font-size-sm);
+        line-height: var(--ks-font-size-xl);
+    }
+    &:hover{
+        background: linear-gradient(180deg, var(--ks-bg-hover-elevated) 0%, var(--ks-bg-elevated) 100%);
+        border-color: var(--ks-border-strong);
+    }
+}
+</style>

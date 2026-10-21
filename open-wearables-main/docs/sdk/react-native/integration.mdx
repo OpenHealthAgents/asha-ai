@@ -1,0 +1,222 @@
+---
+title: "React Native Health Data Integration"
+sidebarTitle: "Integration Guide"
+description: "React Native SDK calls for each integration step - configure, sign in, provider selection, permissions, background sync, disconnect - plus Expo and bare React Native setup."
+keywords: ["react native healthkit integration", "react native health connect", "expo health data sdk", "open wearables react native"]
+"og:title": "React Native Health Data Integration | Open Wearables"
+"og:description": "React Native SDK calls for each integration step, plus Expo and bare React Native setup."
+"og:url": "https://docs.openwearables.io/sdk/react-native/integration"
+"og:type": "article"
+"twitter:title": "React Native Health Data Integration | Open Wearables"
+"twitter:description": "React Native SDK calls for each integration step, plus Expo and bare React Native setup."
+"twitter:card": "summary_large_image"
+---
+
+<Info>
+  Read the [Mobile SDK Integration Guide](/sdk/integration) first. It covers what is the same on every platform: the backend token endpoint, the SDK lifecycle, and the production checklist. This page shows the React Native calls for each step.
+</Info>
+
+<Warning>
+  **Installation currently takes a few extra steps.** The package is not on npm yet, so you install it from GitHub, and on Android its native dependency has to be published to Maven Local first. See [Installation](/sdk/react-native#installation). We're working on publishing the package to npm and serving the Android dependency from a public repository, after which both steps go away.
+</Warning>
+
+## Configure on Every Launch
+
+```tsx
+import { useEffect } from "react";
+import OpenWearablesHealthSDK from "open-wearables";
+
+const OW_HOST = "https://api.your-open-wearables.com";
+
+export default function App() {
+  useEffect(() => {
+    OpenWearablesHealthSDK.configure(OW_HOST);
+  }, []);
+  // ...
+}
+```
+
+`isSessionValid()`, `isSyncActive()`, `getStoredCredentials()`, `getSyncStatus()`, `getAvailableProviders()` and `setProvider()` are synchronous - no `await` needed.
+
+## Sign In
+
+Once per user, when `isSessionValid()` is `false`, with tokens from your [backend endpoint](/sdk/integration#backend-endpoint):
+
+```ts
+const res = await fetch("https://api.yourapp.com/api/health/token", {
+  method: "POST",
+  headers: { Authorization: `Bearer ${yourAuthToken}` },
+});
+const { userId, accessToken, refreshToken } = await res.json();
+
+await OpenWearablesHealthSDK.signIn(userId, accessToken, refreshToken, null);
+```
+
+When token refresh fails, get new tokens and call `updateTokens()` - not `signIn()`:
+
+```ts
+const sub = OpenWearablesHealthSDK.addListener("onAuthError", async () => {
+  try {
+    const { accessToken, refreshToken } = await fetchTokensFromYourBackend();
+    OpenWearablesHealthSDK.updateTokens(accessToken, refreshToken);
+  } catch {
+    // sync stays unauthenticated - ask the user to reconnect
+  }
+});
+```
+
+## Select the Provider (Android)
+
+```ts
+import { Platform } from "react-native";
+
+if (Platform.OS === "android") {
+  const providers = OpenWearablesHealthSDK.getAvailableProviders();
+  // [{ id: "samsung", displayName: "Samsung Health", isAvailable }, { id: "google", displayName: "Health Connect", isAvailable }]
+  const ok = OpenWearablesHealthSDK.setProvider("google"); // false if Health Connect isn't installed
+}
+```
+
+On iOS, `getAvailableProviders()` returns a single `apple` entry. The stored choice is available as `getStoredCredentials().provider`.
+
+## Request Permissions
+
+```ts
+import OpenWearablesHealthSDK, { HealthDataType } from "open-wearables";
+
+await OpenWearablesHealthSDK.requestAuthorization([
+  HealthDataType.Steps,
+  HealthDataType.HeartRate,
+  HealthDataType.Sleep,
+  HealthDataType.Workout,
+]);
+```
+
+See [Supported Health Data Types](/sdk/react-native#supported-health-data-types) for the full list, and [Request permissions](/sdk/integration#request-permissions) for what the returned boolean means on each platform.
+
+## Start Background Sync
+
+```ts
+const started = await OpenWearablesHealthSDK.startBackgroundSync(90); // days of history; 0 = all history
+if (!started) {
+  // not configured, not signed in, or (iOS) no authorized types
+}
+```
+
+Other sync calls, all described in the [SDK README](https://github.com/the-momentum/open-wearables-react-native-sdk#api):
+
+| Call | Notes |
+|------|-------|
+| `stopBackgroundSync()` | Stops background sync. Anchors are kept. |
+| `getSyncStatus()` | `isSyncing`, `initialExportDone`, `sentCount`, `hasResumableSession`, ... |
+| `resetAnchors()` | Forces a full re-sync. Call it while sync is stopped. |
+| `setSyncInterval(minutes)` | Android only (minimum 15). No-op on iOS. |
+
+## Logging
+
+```ts
+import OpenWearablesHealthSDK, { OWLogLevel } from "open-wearables";
+
+OpenWearablesHealthSDK.setLogLevel(OWLogLevel.Always); // None | Always | Debug (default: debug builds only)
+const sub = OpenWearablesHealthSDK.addListener("onLog", ({ message }) => console.log("[OW]", message));
+```
+
+## Disconnect
+
+```ts
+// SDK provider id -> Open Wearables provider slug
+const PROVIDER_SLUGS: Record<string, string> = { apple: "apple", google: "health_connect", samsung: "samsung" };
+
+const { userId, provider } = OpenWearablesHealthSDK.getStoredCredentials();
+// The stored access token may have expired, so get a fresh one from your backend
+const { accessToken } = await fetchTokensFromYourBackend();
+
+const res = await fetch(`${OW_HOST}/api/v1/users/${userId}/connections/${PROVIDER_SLUGS[provider!]}`, {
+  method: "DELETE",
+  headers: { Authorization: `Bearer ${accessToken}` },
+});
+// 404 means there was no connection to revoke. On any other error keep the
+// session, so the user can retry - after signOut() the SDK has no credentials left.
+if (!res.ok && res.status !== 404) {
+  throw new Error(`Disconnect failed: ${res.status}`);
+}
+
+await OpenWearablesHealthSDK.stopBackgroundSync();
+OpenWearablesHealthSDK.signOut();
+```
+
+## Expo and Bare React Native Setup
+
+On top of the [production checklist](/sdk/integration#production-checklist):
+
+- **Expo:** add the config plugin to `app.json` (see [Installation](/sdk/react-native#installation)). It sets the HealthKit entitlements, `Info.plist` usage texts, background modes and task identifiers on iOS, and the Health Connect permission-rationale activity aliases on Android.
+- The plugin **replaces** `UIBackgroundModes`. If your app needs other modes (e.g. `remote-notification`), check `Info.plist` after `npx expo prebuild` and add them back.
+- **Expo, Android:** set `minSdkVersion: 29` with [`expo-build-properties`](https://docs.expo.dev/versions/latest/sdk/build-properties/).
+- **Bare React Native:** [install Expo modules](https://docs.expo.dev/bare/installing-expo-modules/), then add the iOS entitlements and `Info.plist` keys yourself, and the Health Connect activity aliases described in the [Android integration guide](/sdk/android/integration).
+
+## Complete Example
+
+```tsx
+import { useEffect, useState } from "react";
+import { Platform } from "react-native";
+import OpenWearablesHealthSDK, { HealthDataType } from "open-wearables";
+
+const OW_HOST = "https://api.your-open-wearables.com";
+const TYPES = [HealthDataType.Steps, HealthDataType.HeartRate, HealthDataType.Sleep, HealthDataType.Workout];
+
+async function fetchTokens(authToken: string) {
+  const res = await fetch("https://api.yourapp.com/api/health/token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!res.ok) throw new Error("Failed to get SDK tokens");
+  return res.json() as Promise<{ userId: string; accessToken: string; refreshToken: string }>;
+}
+
+export function useHealthSync(authToken: string) {
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    OpenWearablesHealthSDK.configure(OW_HOST); // every launch
+    setConnected(OpenWearablesHealthSDK.isSessionValid());
+
+    const sub = OpenWearablesHealthSDK.addListener("onAuthError", async () => {
+      try {
+        const { accessToken, refreshToken } = await fetchTokens(authToken);
+        OpenWearablesHealthSDK.updateTokens(accessToken, refreshToken);
+      } catch {
+        setConnected(false); // the user has to reconnect
+      }
+    });
+    return () => sub.remove();
+  }, [authToken]);
+
+  async function connect() {
+    const { userId, accessToken, refreshToken } = await fetchTokens(authToken);
+    await OpenWearablesHealthSDK.signIn(userId, accessToken, refreshToken, null); // once per user
+
+    if (Platform.OS === "android" && !OpenWearablesHealthSDK.setProvider("google")) {
+      throw new Error("Health Connect is not installed");
+    }
+    await OpenWearablesHealthSDK.requestAuthorization(TYPES);
+
+    if (!(await OpenWearablesHealthSDK.startBackgroundSync(90))) {
+      throw new Error("Could not start sync");
+    }
+    setConnected(true);
+  }
+
+  return { connected, connect };
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/sdk/react-native/troubleshooting">
+    Common issues and solutions for iOS and Android.
+  </Card>
+  <Card title="SDK API reference" icon="code" href="https://github.com/the-momentum/open-wearables-react-native-sdk#api">
+    Every method and type, with platform differences.
+  </Card>
+</CardGroup>

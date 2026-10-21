@@ -1,0 +1,81 @@
+id: inputs-validations
+namespace: io.kestra.tests
+
+inputs:
+  - id: file
+    type: FILE
+    defaults: something
+
+  - id: array1
+    type: ARRAY
+    itemType: ARRAY
+
+  - id: array2
+    type: ARRAY
+    itemType: SECRET
+
+  - id: array3
+    type: ARRAY
+    itemType: MULTISELECT
+
+  - id: array4
+    type: ARRAY
+    itemType: SELECT
+
+  - id: multiselect1
+    type: MULTISELECT
+    itemType: ARRAY
+
+  - id: multiselect2
+    type: MULTISELECT
+    itemType: SECRET
+
+  - id: multiselect3
+    type: MULTISELECT
+    itemType: MULTISELECT
+
+  - id: multiselect4
+    type: MULTISELECT
+    itemType: SELECT
+
+  - id: array5
+    type: ARRAY
+    itemType: TABLE
+
+  - id: table4
+    type: TABLE
+    columns:
+      - id: attachment
+        type: FILE
+
+  - id: table1
+    type: TABLE
+    columns:
+      - id: size
+        type: INT
+      - id: size
+        type: STRING
+
+  - id: table2
+    type: TABLE
+    columns:
+      - id: region
+        type: STRING
+        dependsOn:
+          inputs:
+            - size
+      - id: size
+        type: INT
+
+  - id: table3
+    type: TABLE
+    minRows: 3
+    maxRows: 1
+    columns:
+      - id: size
+        type: INT
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: Hello World! 🚀

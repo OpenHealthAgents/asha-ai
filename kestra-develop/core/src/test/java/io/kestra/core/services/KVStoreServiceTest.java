@@ -1,0 +1,96 @@
+package io.kestra.core.services;
+
+import java.io.IOException;
+import java.time.Duration;
+
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+
+import io.kestra.core.junit.annotations.KestraTest;
+import io.kestra.core.runners.KVMetadataStateStore;
+import io.kestra.core.storages.StorageInterface;
+import io.kestra.core.storages.kv.*;
+
+import io.micronaut.test.annotation.MockBean;
+import jakarta.inject.Inject;
+
+import static io.kestra.core.tenant.TenantService.MAIN_TENANT;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+@KestraTest
+class KVStoreServiceTest {
+    private static final String TEST_EXISTING_NAMESPACE = "io.kestra.unittest";
+
+    @Inject
+    KVMetadataStateStore kvMetadataStateStore;
+
+    @Inject
+    KVStoreService storeService;
+
+    @Inject
+    StorageInterface storageInterface;
+
+    @Test
+    void shouldGetKVStoreForExistingNamespaceGivenFromNull() {
+        Assertions.assertNotNull(storeService.get(MAIN_TENANT, TEST_EXISTING_NAMESPACE, null));
+    }
+
+    @Test
+    void shouldThrowExceptionWhenAccessingKVStoreForNonExistingNamespace() {
+        KVStoreException exception = Assertions.assertThrows(KVStoreException.class, () -> storeService.get(MAIN_TENANT, "io.kestra.unittest.unknown", null));
+        Assertions.assertTrue(exception.getMessage().contains("namespace 'io.kestra.unittest.unknown' does not exist"));
+    }
+
+    @Test
+    void shouldGetKVStoreForAnyNamespaceWhenAccessingFromChildNamespace() {
+        Assertions.assertNotNull(storeService.get(MAIN_TENANT, "io.kestra", TEST_EXISTING_NAMESPACE));
+    }
+
+    /**
+     * Regression test for issue #10244 — "development" shares the "dev" string prefix but is not one
+     * of its dot-delimited descendants, so it must not be treated as a child namespace (which would
+     * skip both the cross-namespace ACL check and the namespace-existence check).
+     */
+    @Test
+    void shouldNotTreatSiblingNamespaceSharingPrefixAsChild() {
+        // Before the fix, "development".startsWith("dev") made this silently succeed with no ACL or
+        // existence check at all. After the fix, "dev" is correctly treated as unrelated to
+        // "development" and is rejected — as a real ACL denial or, absent one, a not-found namespace.
+        Assertions.assertThrows(
+            KVStoreException.class, () -> storeService.get(MAIN_TENANT, "dev", "development")
+        );
+    }
+
+    @Test
+    void shouldDenyKVStoreAccessWhenAccessingFromPrefixSiblingNamespace() {
+        assertThatThrownBy(() -> storeService.get(MAIN_TENANT, "prod", "prod2"))
+            .isInstanceOf(KVStoreException.class)
+            .hasMessageContaining("Access to 'prod' namespace is not allowed from 'prod2'");
+    }
+
+    @Test
+    void shouldGetKVStoreFromNonExistingNamespaceWithAKV() throws IOException {
+        KVStore kvStore = new InternalKVStore(MAIN_TENANT, "system", storageInterface, kvMetadataStateStore);
+        kvStore.put("key", new KVValueAndMetadata(new KVMetadata("myDescription", Duration.ofHours(1)), "value"));
+        Assertions.assertNotNull(storeService.get(MAIN_TENANT, "system", null));
+    }
+
+    @MockBean(NamespaceService.class)
+    public static class MockNamespaceService extends DefaultNamespaceService {
+
+        public MockNamespaceService() {
+            super(null);
+        }
+
+        @Override
+        public boolean isNamespaceExists(String tenant, String namespace) {
+            return namespace.equals(TEST_EXISTING_NAMESPACE);
+        }
+
+        /** Emulates an EE allow-list where every namespace allows only itself, which OSS never denies. */
+        @Override
+        public boolean isAllowedNamespace(String tenant, String namespace, String fromTenant, String fromNamespace) {
+            return namespace.equals(fromNamespace);
+        }
+    }
+}

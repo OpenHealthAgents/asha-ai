@@ -1,0 +1,38 @@
+package io.kestra.cli.commands.flows;
+
+import java.nio.file.Path;
+
+import io.kestra.cli.AbstractCommand;
+import io.kestra.cli.commands.NoDatabaseCommandInterface;
+import io.kestra.core.models.flows.Flow;
+import io.kestra.core.models.hierarchies.GraphCluster;
+import io.kestra.core.serializers.YamlParser;
+import io.kestra.core.services.Graph2DotService;
+import io.kestra.core.utils.GraphUtils;
+
+import lombok.extern.slf4j.Slf4j;
+import picocli.CommandLine;
+
+@CommandLine.Command(
+    name = "dot",
+    description = "Generate a DOT graph from a file"
+)
+@Slf4j
+public class FlowDotCommand extends AbstractCommand implements NoDatabaseCommandInterface {
+
+    @CommandLine.Parameters(index = "0", description = "The flow file to display")
+    private Path file;
+
+    @Override
+    public Integer call() throws Exception {
+        super.call();
+
+        Flow flow = YamlParser.parse(file.toFile(), Flow.class);
+
+        GraphCluster graph = GraphUtils.of(flow, null);
+
+        stdOut(Graph2DotService.dot(graph.getGraph()));
+
+        return 0;
+    }
+}

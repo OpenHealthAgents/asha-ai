@@ -1,0 +1,35 @@
+/* CollapsibleSection.module.css */
+
+.root {
+  position: relative;
+}
+
+.header {
+  width: 100%;
+  cursor: default;
+}
+
+.chevron {
+  transition: transform 0.2s ease;
+  cursor: pointer;
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1)) !important;
+}
+
+.chevron[data-collapsed] {
+  transform: rotate(-90deg);
+}
+
+@media (hover: hover) {
+  .chevron:hover {
+    background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6)) !important;
+  }
+}
+
+.title {
+  cursor: pointer;
+}
+
+.addButton {
+  flex-shrink: 0;
+  stroke-width: 1;
+}

@@ -1,0 +1,333 @@
+---
+title: "Open Wearables Integration Guide"
+sidebarTitle: "Integration Guide"
+description: "Create users, connect wearable providers via OAuth, and fetch health metrics. FastAPI examples included. Works with any backend language."
+keywords: ["health api integration guide", "wearable api integration", "open wearables api tutorial", "health data api tutorial"]
+"og:title": "Open Wearables Integration Guide"
+"og:description": "Create users, connect providers via OAuth, fetch health metrics. FastAPI examples. Any backend language."
+"og:url": "https://docs.openwearables.io/dev-guides/integration-guide"
+"og:type": "article"
+"twitter:title": "Open Wearables Integration Guide"
+"twitter:description": "Create users, connect providers via OAuth, fetch health metrics. FastAPI examples. Any backend language."
+"twitter:card": "summary_large_image"
+---
+
+This guide walks you through a backend integration with Open Wearables: creating users, connecting them to cloud providers (Garmin, Oura, Whoop, Polar, ...) via OAuth, and fetching normalized health data.
+
+<Note>
+  Apple Health, Health Connect and Samsung Health have no cloud API - their data comes from your mobile app through the SDK. For that part, see the [Mobile SDK Integration Guide](/sdk/integration). Steps 1 and 4 below apply to both.
+</Note>
+
+## Prerequisites
+
+- An Open Wearables instance (self-hosted or cloud)
+- An API key from **Settings → Credentials** in the developer portal
+- Any backend language - examples use Python (`httpx`) and TypeScript
+
+```bash
+OPEN_WEARABLES_API_URL=http://localhost:8000
+OPEN_WEARABLES_API_KEY=sk-your-api-key-here
+```
+
+### Authentication
+
+Send the API key in the `X-Open-Wearables-API-Key` header:
+
+```bash
+curl http://localhost:8000/api/v1/users \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
+```
+
+<Warning>
+  The API key is **not** a Bearer token - `Authorization: Bearer YOUR_API_KEY` returns 401.
+</Warning>
+
+## Integration Flow Overview
+
+![Backend integration flow: 1. your backend creates a user in Open Wearables, 2. gets an authorization URL, 3. your frontend redirects the user to the provider to sign in and approve access, 4. the provider calls back Open Wearables, 5. which redirects the user back to your redirect_uri, 6. Open Wearables backfills history and keeps syncing with the provider via pull or webhooks, 7. your backend fetches data with the API key.](../images/integration-flow.png)
+
+---
+
+## Step 1: User Registration
+
+When a user registers in your application, create a corresponding user in Open Wearables. All fields are **optional** - you can `POST {}` and get back a valid user.
+
+| Field        | Type     | Notes                                                        |
+| ------------ | -------- | ------------------------------------------------------------ |
+| `email`      | `string` | Must be a valid email if provided. Not unique - see below.   |
+| `first_name` | `string` | Max 100 characters. Shown in the dashboard.                  |
+| `last_name`  | `string` | Max 100 characters. Shown in the dashboard.                  |
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:8000/api/v1/users \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "first_name": "Ada", "last_name": "Lovelace"}'
+```
+
+```python Python
+import httpx
+
+async def create_user(email: str | None = None) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{OPEN_WEARABLES_API_URL}/api/v1/users",
+            headers={"X-Open-Wearables-API-Key": API_KEY},
+            json={"email": email} if email else {},
+        )
+        response.raise_for_status()
+        return response.json()
+```
+
+```typescript TypeScript
+async function createUser(email?: string): Promise<{ id: string }> {
+  const response = await fetch(`${OPEN_WEARABLES_API_URL}/api/v1/users`, {
+    method: "POST",
+    headers: { "X-Open-Wearables-API-Key": API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(email ? { email } : {}),
+  });
+  return response.json();
+}
+```
+
+</CodeGroup>
+
+The response contains the user's `id` (UUID) along with the fields you sent - see [Create User](/api-reference/external:-users/create-user) for the full shape.
+
+<Warning>
+  **Store the Open Wearables user `id` on your own user row.** Every other call takes it, and Open Wearables doesn't enforce uniqueness - calling `POST /api/v1/users` twice with the same email creates two users. Check your stored ID before creating one. The legacy `external_user_id` field is deprecated and no data endpoint accepts it, so don't use it for deduplication.
+</Warning>
+
+---
+
+## Step 2: Connect Wearable Provider
+
+### List available providers
+
+Which providers are enabled depends on your instance, so fetch the list at runtime:
+
+```bash
+curl "http://localhost:8000/api/v1/oauth/providers?enabled_only=true&cloud_only=true" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
+```
+
+```json
+[
+  {
+    "provider": "garmin",
+    "name": "Garmin",
+    "has_cloud_api": true,
+    "is_enabled": true,
+    "icon_url": "/static/provider-icons/garmin.svg",
+    "live_sync_mode": "webhook",
+    "live_sync_configurable": false
+  }
+]
+```
+
+- `enabled_only` - only providers enabled in your instance (default `false`).
+- `cloud_only` - only OAuth providers, without SDK-only ones like Apple Health (default `false`). Use it for a web "connect" screen.
+- `icon_url` is relative - prepend your API base URL.
+
+### Get the authorization URL
+
+Provider names are lowercase (`garmin`, `oura`, `whoop`, `polar`, `suunto`, ...). Pass `redirect_uri` to send the user back to your app after OAuth:
+
+<CodeGroup>
+
+```bash cURL
+curl "http://localhost:8000/api/v1/oauth/garmin/authorize?user_id=USER_ID&redirect_uri=https://yourapp.com/oauth/callback" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
+```
+
+```python Python
+async def get_auth_url(provider: str, user_id: str, redirect_uri: str) -> str:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{OPEN_WEARABLES_API_URL}/api/v1/oauth/{provider}/authorize",
+            headers={"X-Open-Wearables-API-Key": API_KEY},
+            params={"user_id": user_id, "redirect_uri": redirect_uri},
+        )
+        return response.json()["authorization_url"]
+```
+
+</CodeGroup>
+
+```json
+{
+  "authorization_url": "https://connect.garmin.com/oauth2Confirm?...",
+  "state": "abc123..."
+}
+```
+
+Redirect the user to `authorization_url`. After they approve access, the provider calls Open Wearables, which stores the connection and redirects the user to your `redirect_uri`.
+
+### Check connection status
+
+```bash
+curl "http://localhost:8000/api/v1/users/USER_ID/connections" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
+```
+
+Each connection has a `provider` and a `status` (`active`, `revoked` or `expired`). See [Get Connections](/api-reference/external:-connections/get-connections-endpoint) for all fields.
+
+---
+
+## Step 3: Historical Backfill (Automatic)
+
+You don't need to trigger a sync after OAuth. When a user connects a provider, Open Wearables dispatches a historical backfill:
+
+- up to **90 days** for pull-based providers (Polar, Suunto, Oura, Whoop, Strava, ...)
+- up to **30 days** for Garmin, whose backfill is capped at 30 days before the user's consent date
+
+After that, new data arrives automatically - via provider webhooks or periodic polling, depending on the provider. See [Historical Data](/providers/historical-data) for each provider's maximum range.
+
+This is controlled by `HISTORICAL_SYNC_ON_CONNECT` (default `true`). The default is planned to change in a future release. To control the range yourself, set it to `false` and call [`POST /api/v1/providers/{provider}/users/{user_id}/sync/historical`](/api-reference/external:-data-sync/sync-historical-data) (`days` defaults to 90, max 365).
+
+---
+
+## Step 4: Retrieve Health Data
+
+Data endpoints return a paginated envelope:
+
+```json
+{
+  "data": [ /* items */ ],
+  "pagination": { "next_cursor": "eyJpZCI6...", "previous_cursor": null, "has_more": true, "total_count": 150 },
+  "metadata": { "resolution": null, "sample_count": 50, "start_time": "2025-01-01T00:00:00Z", "end_time": "2025-01-31T23:59:59Z" }
+}
+```
+
+Pass `cursor=<next_cursor>` until `has_more` is `false`. `total_count` is only set on the first page. Health scores use `offset` / `limit` instead of a cursor.
+
+<CardGroup cols={2}>
+  <Card title="Activity summary" icon="person-running" href="/api-reference/external:-summaries/get-activity-summary">
+    Daily steps, distance, floors, calories, active/sedentary minutes, intensity minutes, heart rate.
+  </Card>
+  <Card title="Sleep summary" icon="moon" href="/api-reference/external:-summaries/get-sleep-summary">
+    Daily sleep duration, efficiency, stages, sessions, naps, and average HR/HRV/SpO2.
+  </Card>
+  <Card title="Body summary" icon="weight-scale" href="/api-reference/external:-summaries/get-body-summary">
+    Weight, height, BMI, body fat, averaged resting HR/HRV, latest temperature and blood pressure.
+  </Card>
+  <Card title="Timeseries" icon="chart-line" href="/api-reference/external:-timeseries/get-timeseries">
+    Granular samples (heart rate, steps, SpO2, ...) with optional `resolution` bucketing.
+  </Card>
+  <Card title="Workouts" icon="dumbbell" href="/api-reference/external:-events/list-workouts">
+    Workout sessions with type, duration, calories, distance, heart rate, pace, and elevation.
+  </Card>
+  <Card title="Health scores" icon="gauge-high" href="/api-reference/external:-health-scores/list-health-scores">
+    Provider-computed sleep, recovery, readiness, stress, body battery, and strain scores.
+  </Card>
+</CardGroup>
+
+Things to know when reading the data:
+
+- **Nullable fields.** Apart from identifiers, dates and `source`, any field can be `null` - providers report different subsets. See the [coverage matrix](/providers/coverage).
+- **`source.provider`** is the provider slug (`garmin`, `apple`, `health_connect`, ...). `source.device` is the raw device model.
+- **Sleep** durations are in minutes and exclude naps, which are reported separately.
+- **Recovery summary** returns data only for WHOOP.
+- **Body summary** is a single object, not a paginated list, and is `null` when the user has no body data.
+- **Timeseries** requires `start_time` and `end_time`. `types` is optional and repeated (`?types=heart_rate&types=steps`) - without it, all series types are returned.
+
+### Example client
+
+```python
+import httpx
+
+class OpenWearablesClient:
+    def __init__(self, base_url: str, api_key: str):
+        self.client = httpx.AsyncClient(base_url=base_url, headers={"X-Open-Wearables-API-Key": api_key})
+
+    async def get_or_create_user(self, local_user) -> str:
+        """Return the Open Wearables user ID, creating the user once."""
+        if not local_user.open_wearables_user_id:
+            resp = await self.client.post("/api/v1/users", json={"email": local_user.email})
+            resp.raise_for_status()
+            local_user.open_wearables_user_id = resp.json()["id"]  # persist on your side
+        return local_user.open_wearables_user_id
+
+    async def get_auth_url(self, provider: str, user_id: str, redirect_uri: str) -> str:
+        resp = await self.client.get(
+            f"/api/v1/oauth/{provider}/authorize",
+            params={"user_id": user_id, "redirect_uri": redirect_uri},
+        )
+        resp.raise_for_status()
+        return resp.json()["authorization_url"]
+
+    async def get_all(self, path: str, **params) -> list[dict]:
+        """Walk a cursor-paginated endpoint, e.g. /api/v1/users/{id}/summaries/sleep."""
+        items: list[dict] = []
+        while True:
+            resp = await self.client.get(path, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+            items.extend(payload["data"])
+            if not payload["pagination"]["has_more"]:
+                return items
+            params["cursor"] = payload["pagination"]["next_cursor"]
+
+
+# Usage (inside an async function)
+ow = OpenWearablesClient("http://localhost:8000", "sk-your-api-key")
+user_id = await ow.get_or_create_user(local_user)
+auth_url = await ow.get_auth_url("garmin", user_id, "https://myapp.com/callback")
+# ...after the user connects:
+sleep = await ow.get_all(f"/api/v1/users/{user_id}/summaries/sleep", start_date="2025-01-01", end_date="2025-01-31")
+```
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Docker container can't reach Open Wearables on localhost">
+    If your app runs in Docker and Open Wearables runs on the host machine:
+
+    ```yaml docker-compose.yml
+    services:
+      app:
+        extra_hosts:
+          - "host.docker.internal:host-gateway"
+        environment:
+          - OPEN_WEARABLES_API_URL=http://host.docker.internal:8000
+    ```
+  </Accordion>
+
+  <Accordion title="401 Unauthorized with a correct API key">
+    Use `X-Open-Wearables-API-Key: YOUR_API_KEY`, not `Authorization: Bearer YOUR_API_KEY`.
+  </Accordion>
+
+  <Accordion title="Data endpoints return empty results right after OAuth">
+    The backfill runs asynchronously and takes from seconds to several minutes, depending on the provider and the amount of history - Garmin can take hours. `last_synced_at` on the connection is set when the user connects, so it doesn't tell you whether the backfill finished. Check [`GET /api/v1/users/{user_id}/sync/runs`](/api-reference/external:-sync-status/list-sync-run-summaries) for sync progress instead.
+
+    If `HISTORICAL_SYNC_ON_CONNECT=false` on your instance, no backfill runs automatically - see [Step 3](#step-3-historical-backfill-automatic).
+  </Accordion>
+
+  <Accordion title="Timeseries endpoint returns empty data">
+    Check that `start_time` / `end_time` cover the period you expect, and that the user has that series type - `GET /api/v1/users/{user_id}/summaries/data` shows what's been ingested.
+  </Accordion>
+
+  <Accordion title="OAuth callback doesn't redirect to my app">
+    Pass `redirect_uri` when requesting the authorization URL.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="terminal" href="/api-reference/introduction">
+    All endpoints with request and response schemas.
+  </Card>
+  <Card title="Mobile SDK" icon="mobile" href="/sdk/integration">
+    Add Apple Health, Health Connect and Samsung Health via your mobile app.
+  </Card>
+  <Card title="Provider Setup" icon="plug" href="/providers/supported">
+    Configure OAuth credentials for each provider.
+  </Card>
+  <Card title="Data Model" icon="database" href="/architecture/unified-data-model">
+    Understand the unified health data model.
+  </Card>
+</CardGroup>

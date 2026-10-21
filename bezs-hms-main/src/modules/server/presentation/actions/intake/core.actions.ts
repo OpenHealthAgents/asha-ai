@@ -1,0 +1,203 @@
+/**
+ * Intake core server actions.
+ *
+ * Layer: presentation / actions / intake
+ *
+ * All 6 intake operations as ZSA server actions using authenticatedProcedure.
+ * createIntakeAction injects the session userId so the client never needs to
+ * supply it (preventing impersonation).
+ *
+ * Intake data lives in the local Prisma DB — not FHIR-GQL.
+ */
+
+"use server";
+
+import type { AuthResponse } from "@/modules/server/auth/types";
+import { ROLES } from "@/modules/server/shared/auth/roles";
+import {
+  CreateIntakeActionSchema,
+  UpdateIntakeActionSchema,
+  LinkIntakeActionSchema,
+  AbandonIntakeActionSchema,
+  GetIntakeByIdActionSchema,
+  GetIntakeByFhirAppointmentIdActionSchema,
+  ListIntakesActionSchema,
+  type TCreateIntakeAction,
+  type TUpdateIntakeAction,
+  type TLinkIntakeAction,
+  type TAbandonIntakeAction,
+  type TGetIntakeByIdAction,
+  type TGetIntakeByFhirAppointmentIdAction,
+  type TListIntakesAction,
+} from "@/modules/entities/schemas/intake";
+import {
+  createIntakeController,
+  updateIntakeController,
+  linkIntakeToAppointmentController,
+  abandonIntakeController,
+  getIntakeByIdController,
+  getIntakeByFhirAppointmentIdController,
+  listIntakesController,
+  type TCreateIntakeControllerOutput,
+  type TUpdateIntakeControllerOutput,
+  type TLinkIntakeControllerOutput,
+  type TAbandonIntakeControllerOutput,
+  type TGetIntakeByIdControllerOutput,
+  type TGetIntakeByFhirAppointmentIdControllerOutput,
+  type TListIntakesControllerOutput,
+} from "@/modules/server/core/intake/interface-adapters/controllers";
+import { authenticatedProcedure } from "../procedures";
+
+/**
+ * Creates a new IN_PROGRESS intake session.
+ * The session userId and org_id are injected server-side — the client cannot
+ * supply a different userId to start an intake on behalf of another user, or
+ * a different org_id to attribute the record to another tenant.
+ */
+export const createIntakeAction = authenticatedProcedure
+  .createServerAction()
+  .input(CreateIntakeActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+      ctx,
+    }: {
+      input: TCreateIntakeAction;
+      ctx: { session: AuthResponse };
+    }): Promise<TCreateIntakeControllerOutput> => {
+      // Inject userId/org_id from session — client supplies only mode + optional fields
+      const enrichedPayload = {
+        ...input.payload,
+        userId: ctx.session.session.userId,
+        org_id: ctx.session.session.activeOrganizationId ?? undefined,
+      };
+      return createIntakeController(enrichedPayload);
+    },
+  );
+
+/**
+ * Completes an intake session — saves conversation transcript + AI report
+ * and flips status to COMPLETED.
+ */
+export const updateIntakeAction = authenticatedProcedure
+  .createServerAction()
+  .input(UpdateIntakeActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+    }: {
+      input: TUpdateIntakeAction;
+    }): Promise<TUpdateIntakeControllerOutput> => {
+      return updateIntakeController(input.payload);
+    },
+  );
+
+/**
+ * Links a completed intake to the FHIR appointment the patient just booked.
+ * Call this immediately after a successful bookAppointmentAction when
+ * intake_id was present in the booking flow.
+ */
+export const linkIntakeToAppointmentAction = authenticatedProcedure
+  .createServerAction()
+  .input(LinkIntakeActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+    }: {
+      input: TLinkIntakeAction;
+    }): Promise<TLinkIntakeControllerOutput> => {
+      return linkIntakeToAppointmentController(input.payload);
+    },
+  );
+
+/**
+ * Marks an in-progress intake as ABANDONED.
+ * Called when the patient navigates away without completing.
+ */
+export const abandonIntakeAction = authenticatedProcedure
+  .createServerAction()
+  .input(AbandonIntakeActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+    }: {
+      input: TAbandonIntakeAction;
+    }): Promise<TAbandonIntakeControllerOutput> => {
+      return abandonIntakeController(input.payload);
+    },
+  );
+
+/** Fetches a single intake by its local integer ID. */
+export const getIntakeByIdAction = authenticatedProcedure
+  .createServerAction()
+  .input(GetIntakeByIdActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+    }: {
+      input: TGetIntakeByIdAction;
+    }): Promise<TGetIntakeByIdControllerOutput> => {
+      return getIntakeByIdController(input.payload);
+    },
+  );
+
+/**
+ * Doctor-side: retrieves the intake linked to a FHIR appointment.
+ * Returns null when no intake exists for that appointment.
+ */
+export const getIntakeByFhirAppointmentIdAction = authenticatedProcedure
+  .createServerAction()
+  .input(GetIntakeByFhirAppointmentIdActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+      ctx,
+    }: {
+      input: TGetIntakeByFhirAppointmentIdAction;
+      ctx: { session: AuthResponse };
+    }): Promise<TGetIntakeByFhirAppointmentIdControllerOutput> => {
+      // Merge session org_id into the payload — prevents client from supplying a different org_id
+      const enrichedPayload = {
+        ...input.payload,
+        org_id: ctx.session.session.activeOrganizationId ?? undefined,
+      };
+      return getIntakeByFhirAppointmentIdController(enrichedPayload);
+    },
+  );
+
+/**
+ * Returns a paginated list of AI Intake records.
+ * Patient portal passes user_id to scope to own records.
+ * Admin/doctor portal can omit user_id to see org-wide records — org_id
+ * itself is injected from the session, so that "org-wide" is always the
+ * caller's own org, never one supplied by the client.
+ *
+ * user_id is only trusted from the client when the caller holds a
+ * "telemedicine-staff" role (doctor/admin) — anyone else has their user_id
+ * forced to their own session id, whatever they supplied or omitted, so a
+ * patient account can never read another patient's intake records by
+ * calling this action directly with a different user_id (or none at all).
+ */
+export const listIntakesAction = authenticatedProcedure
+  .createServerAction()
+  .input(ListIntakesActionSchema, { skipInputParsing: true })
+  .handler(
+    async ({
+      input,
+      ctx,
+    }: {
+      input: TListIntakesAction;
+      ctx: { session: AuthResponse };
+    }): Promise<TListIntakesControllerOutput> => {
+      const isStaff = (ROLES["telemedicine-staff"] as readonly string[]).includes(
+        ctx.session.session.activeRole,
+      );
+      const enrichedPayload = {
+        ...input.payload,
+        // Inject org_id from session — client cannot list another org's intakes
+        org_id: ctx.session.session.activeOrganizationId ?? undefined,
+        user_id: isStaff ? input.payload.user_id : ctx.session.user.id,
+      };
+      return listIntakesController(enrichedPayload);
+    },
+  );

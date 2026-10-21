@@ -1,0 +1,134 @@
+// SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
+// SPDX-License-Identifier: Apache-2.0
+import { allOk, forbidden, getSearchResourceTypes, OperationOutcomeError, parseSearchRequest } from '@medplum/core';
+import type { FhirRequest, FhirResponse } from '@medplum/fhir-router';
+import { RepositoryMode } from '@medplum/fhir-router';
+import type { Project, Reference } from '@medplum/fhirtypes';
+import type { AuthenticatedRequestContext } from '../../context';
+import { getAuthenticatedContext, requireSuperAdmin } from '../../context';
+import { escapeUnicode } from '../../migrations/migrate-utils';
+import { repoAccess } from '../repository/access-tracker';
+import { getCount, getSelectQueryForSearch } from '../search';
+import { SqlBuilder } from '../sql';
+import { makeOperationDefinition } from './definitions';
+import {
+  buildOutputParameters,
+  makeOperationDefinitionParameter as param,
+  parseInputParameters,
+} from './utils/parameters';
+
+const operation = makeOperationDefinition(
+  { scope: 'system' },
+  {
+    name: 'db-explain',
+    code: 'explain',
+    parameter: [
+      param('in', 'query', 'string', 1, '1'),
+      param('in', 'analyze', 'boolean', 0, '1'),
+      param('in', 'format', 'string', 0, '1'),
+      param('in', 'count', 'boolean', 0, '1'),
+      param('out', 'query', 'string', 1, '1'),
+      param('out', 'parameters', 'string', 1, '1'),
+      param('out', 'explain', 'string', 1, '1'),
+      param('out', 'countEstimate', 'integer', 0, '1'),
+      param('out', 'countAccurate', 'integer', 0, '1'),
+    ],
+  }
+);
+
+export async function dbExplainHandler(req: FhirRequest): Promise<FhirResponse> {
+  const ctx = requireExplainAccess();
+  const params = parseInputParameters<{
+    query: string;
+    project?: Reference<Project>;
+    analyze?: boolean;
+    format?: 'text' | 'json';
+    count?: boolean;
+  }>(operation, req);
+  const searchReq = parseSearchRequest(params.query);
+  const repo = ctx.repo.clone();
+  repo.setMode(RepositoryMode.READER);
+  const selectQuery = getSelectQueryForSearch(repo, searchReq);
+
+  // Capture SQL query and parameters before adding EXPLAIN
+  const sqlBuilder = new SqlBuilder();
+  selectQuery.buildSql(sqlBuilder);
+  const query = sqlBuilder.toString();
+  const parameters = sqlBuilder
+    .getValues()
+    .map((v, i) => `$${i + 1} = ${formatQueryParam(v)}`)
+    .join(', ');
+
+  selectQuery.explain = ['settings'];
+  if (params.analyze) {
+    selectQuery.explain.push('analyze', 'buffers');
+  }
+  if (params.format === 'json') {
+    selectQuery.explain.push('format json');
+  }
+
+  const searchResourceTypes = getSearchResourceTypes(searchReq);
+  const { result, countResult } = await repo.withStatementTimeout(
+    { timeoutMs: 0, resourceTypes: searchResourceTypes },
+    async () => {
+      const result = await repo.executeSql<{ 'QUERY PLAN': string[] }>(
+        selectQuery,
+        repoAccess.sqlRead(searchResourceTypes, { source: 'dbExplainHandler' })
+      );
+      const countResult = params.count ? await getCount(repo, searchReq, { forceAccurate: true }) : undefined;
+      return { result, countResult };
+    }
+  );
+
+  let explain: string;
+  if (params.format === 'json') {
+    explain = result[0]['QUERY PLAN'][0];
+    explain = JSON.stringify(explain, (key, value) => (key.endsWith('Blocks') && value === 0 ? undefined : value), 0);
+  } else {
+    explain = result.map((r) => r['QUERY PLAN']).join('\n');
+  }
+
+  const output = buildOutputParameters(operation, {
+    query,
+    parameters,
+    explain: escapeUnicode(explain),
+    countEstimate: countResult?.estimate,
+    countAccurate: countResult?.accurate,
+  });
+  return [allOk, output];
+}
+
+/**
+ * This is probably an incomplete implementation, but is meant to approximate the output
+ * in auto_explain slow query entries
+ * @param param - The parameter value to format
+ * @returns The formatted parameter value
+ */
+function formatQueryParam(param: any): string {
+  if (typeof param === 'number') {
+    return param.toString();
+  }
+  return `'${typeof param === 'string' ? escapeUnicode(param) : param}'`;
+}
+
+/**
+ * Requires a super-admin caller while preserving the effective repository for delegated requests.
+ * Unlike other privileged operations, $explain intentionally uses On-Behalf-Of to show the query
+ * plan produced by the delegated user's access policy.
+ * @returns The authenticated request context.
+ */
+function requireExplainAccess(): AuthenticatedRequestContext {
+  const ctx = getAuthenticatedContext();
+
+  if (ctx.authState.onBehalfOfMembership) {
+    // if onBehalfOf, must check if the actor's project is a super admin
+    if (!ctx.authState.project.superAdmin) {
+      throw new OperationOutcomeError(forbidden);
+    }
+  } else {
+    // if no onBehalfOfMembership, just check for super admin
+    return requireSuperAdmin();
+  }
+
+  return ctx;
+}

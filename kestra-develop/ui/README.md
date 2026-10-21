@@ -1,0 +1,105 @@
+# Kestra UI
+
+Kestra UI is running using [Vite](https://vite.dev/).
+
+---
+
+## INSTRUCTIONS
+
+### Development:
+- (Optional) By default, your dev server will target `localhost:8080`. If your backend is running elsewhere, you can create `.env.development.local` under `ui` folder with this content:
+```
+VITE_PROXY_URL={myApiUrl}
+```
+
+- Navigate into the `ui` folder and run `npm install` to install the dependencies for the frontend project.
+
+- Now go to the `cli/src/main/resources` folder and create a `application-override.yml` file.
+
+Now you have two choices:
+
+`Local mode`:
+
+Runs the Kestra server in local mode which uses a H2 database, so this is the only config you'd need:
+
+```yaml
+micronaut:
+  server:
+    cors:
+      enabled: true
+      configurations:
+        all:
+          allowedOrigins:
+            - http://localhost:5173
+```
+
+You can then open a new terminal and run the following command to start the backend server: `./gradlew runLocal`
+
+`Standalone mode`:
+
+Runs in standalone mode which uses Postgres. Make sure to have a local Postgres instance already running on localhost:
+
+```yaml
+kestra:
+  repository:
+    type: postgres
+  storage:
+    type: local
+    local:
+      base-path: "/app/storage"
+  queue:
+    type: postgres
+  tasks:
+    tmp-dir:
+      path: /tmp/kestra-wd/tmp
+  anonymous-usage-report:
+    enabled: false
+
+datasources:
+  postgres:
+    url: jdbc:postgresql://localhost:5432/kestra
+    driverClassName: org.postgresql.Driver
+    username: kestra
+    password: k3str4
+
+flyway:
+  datasources:
+    postgres:
+      enabled: true
+      locations:
+        - classpath:migrations/postgres
+      # We must ignore missing migrations as we may delete the wrong ones or delete those that are not used anymore.
+      ignore-migration-patterns: "*:missing,*:future"
+      out-of-order: true
+
+micronaut:
+  server:
+    cors:
+      enabled: true
+      configurations:
+        all:
+          allowedOrigins:
+            - http://localhost:5173
+```
+
+If you're doing frontend development, you can run `npm run dev` from the `ui` folder after having the above running (which will provide a backend) to access your application from `localhost:5173`. This has the benefit to watch your changes and hot-reload upon doing frontend changes.
+
+### CORS and the 404 disambiguation headers
+
+Kestra tags every 404 response with `X-Kestra-Edition` and `X-Kestra-Route-Matched` (see `NotFoundHeadersFilter`) so a browser-based client (e.g. `client-sdk`) can tell a genuine not-found apart from a route that simply doesn't exist on this server/edition.
+
+Browsers hide any response header the server doesn't list in `Access-Control-Expose-Headers`, so cross-origin JavaScript would otherwise never see these two. You don't need to configure that: `NotFoundHeadersCorsCustomizer` appends both header names to the `exposed-headers` of every CORS configuration you define — the `all` configuration in the snippet above included. Kestra ships no CORS configuration of its own, because a named configuration declared without `allowedOrigins` matches *any* origin with credentials allowed, and `CorsFilter` uses the first configuration matching the request origin — an OSS default could therefore shadow your own origin-restricted one.
+
+---
+
+### Testing
+
+Unit and Storybook tests run from this folder. The end-to-end suite is its own package at
+[../e2e](../e2e); the devcontainer installs the Playwright browsers on create, so `npm run test:e2e`
+works out of the box there. If they are ever missing, reinstall them with `npx playwright install`.
+
+---
+
+## Translations
+
+The UI is translated into thirteen languages, with English as the source of truth and every other locale generated from it. How the pipeline works - generation, fingerprints, checks, CI - is documented in [scripts/translations/README.md](scripts/translations/README.md).
