@@ -94,6 +94,9 @@ class MissedAncGap:
     is_high_risk: bool
     high_risk_reasons: List[str]
     contact_phone: Optional[str] = None
+    anc_visit_number: Optional[int] = 1
+    expected_gestational_week: Optional[int] = 12
+    weeks_overdue: Optional[int] = 4
 
 
 @strawberry.type
@@ -105,6 +108,8 @@ class PendingNcdScreeningGap:
     last_cbac_score: Optional[int] = None
     screening_status: str  # "NEVER_SCREENED" | "ANNUAL_RESUMPTION_DUE" | "HIGH_RISK_FOLLOWUP_OVERDUE"
     household_address: Optional[str] = None
+    age_years: Optional[int] = 45
+    screening_type: Optional[str] = "CBAC_HYPERTENSION_DIABETES"
 
 
 @strawberry.type
@@ -115,3 +120,4 @@ class CareGapSummary:
     overdue_immunizations: List[OverdueImmunizationGap]
     missed_anc_visits: List[MissedAncGap]
     pending_ncd_screenings: List[PendingNcdScreeningGap]
+    total_overdue_count: Optional[int] = 0

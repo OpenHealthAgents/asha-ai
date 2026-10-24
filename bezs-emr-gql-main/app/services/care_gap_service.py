@@ -134,6 +134,7 @@ class CareGapService:
             village_lgd_code=village_lgd_code,
             village_name=village_names.get(village_lgd_code, f"Village LGD #{village_lgd_code}"),
             total_care_gaps=total_gaps,
+            total_overdue_count=total_gaps,
             overdue_immunizations=overdue_immunizations,
             missed_anc_visits=missed_anc_visits,
             pending_ncd_screenings=pending_ncd_screenings,

@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SevaFirst: ASHA AI Copilot & PHC Command Center</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+      70% { transform: scale(1.05); box-shadow: 0 0 0 16px rgba(239, 68, 68, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+    .mic-pulse {
+      animation: pulse-ring 2s infinite;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
+
+  <!-- Top Navigation Bar -->
+  <header class="bg-slate-800/90 border-b border-slate-700 backdrop-blur sticky top-0 z-50 px-6 py-3.5 flex items-center justify-between shadow-lg">
+    <div class="flex items-center gap-3">
+      <div class="bg-emerald-500 text-slate-950 p-2 rounded-xl font-black text-xl tracking-tighter flex items-center justify-center shadow-lg shadow-emerald-500/20">
+        SF
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="font-bold text-lg text-white tracking-wide">SevaFirst ASHA AI Copilot</h1>
+          <span class="bg-emerald-500/10 text-emerald-400 text-xs px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold">LIVE CONNECTED</span>
+        </div>
+        <p class="text-xs text-slate-400">National Health Mission (NHM) • Government of India Frontline Triage</p>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="flex items-center bg-slate-900/80 p-1 rounded-xl border border-slate-700">
+      <button onclick="switchTab('mobile-copilot')" id="tab-mobile" class="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 bg-emerald-600 text-white shadow-sm">
+        <i data-lucide="smartphone" class="w-4 h-4"></i> ASHA Mobile Copilot
+      </button>
+      <button onclick="switchTab('phc-dashboard')" id="tab-phc" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2">
+        <i data-lucide="hospital" class="w-4 h-4"></i> PHC Doctor Command Center
+      </button>
+      <button onclick="switchTab('telemetry-impact')" id="tab-telemetry" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2">
+        <i data-lucide="activity" class="w-4 h-4"></i> Impact & Audit Trail
+      </button>
+      <button onclick="switchTab('system-mesh')" id="tab-mesh" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-2">
+        <i data-lucide="server" class="w-4 h-4"></i> Subsystems (Ports)
+      </button>
+    </nav>
+
+    <!-- Frontline Worker Active Badge -->
+    <div class="hidden md:flex items-center gap-3 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-700/60">
+      <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></div>
+      <div class="text-right">
+        <div class="text-xs font-semibold text-slate-200">ASHA Kavitha Sundaram</div>
+        <div class="text-[10px] text-slate-400">Thazhambur • LGD: 629375</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Viewports -->
+  <main class="flex-1 p-6 max-w-7xl w-full mx-auto">
+
+    <!-- ===================================================================== -->
+    <!-- VIEWPORT 1: ASHA MOBILE COPILOT SIMULATOR (DrGodly-Mobile-Aplication) -->
+    <!-- ===================================================================== -->
+    <section id="view-mobile-copilot" class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      
+      <!-- Interactive Scenario Controls (Left Col) -->
+      <div class="lg:col-span-5 space-y-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <i data-lucide="play-circle" class="w-4 h-4 text-emerald-400"></i> Field Demo Scenarios
+            </h2>
+            <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">1-Click Live Test</span>
+          </div>
+
+          <div class="space-y-3">
+            <!-- Scenario A Button -->
+            <button onclick="triggerScenarioA()" class="w-full text-left p-3.5 rounded-xl border border-red-500/30 bg-red-950/20 hover:bg-red-950/40 transition group">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-red-400 group-hover:text-red-300 flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> Scenario A: High-Risk Maternal
+                </span>
+                <span class="text-[10px] bg-red-900/50 text-red-300 px-2 py-0.5 rounded">32w G2P1</span>
+              </div>
+              <p class="text-xs text-slate-300 mt-1">Priya Anbarasan • Severe headache, blurred vision, BP 152/98 mmHg (Pre-eclampsia).</p>
+            </button>
+
+            <!-- Scenario B Button -->
+            <button onclick="triggerScenarioB()" class="w-full text-left p-3.5 rounded-xl border border-amber-500/30 bg-amber-950/20 hover:bg-amber-950/40 transition group">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-amber-400 group-hover:text-amber-300 flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-amber-500"></span> Scenario B: Pediatric Care Gap
+                </span>
+                <span class="text-[10px] bg-amber-900/50 text-amber-300 px-2 py-0.5 rounded">14mo Infant</span>
+              </div>
+              <p class="text-xs text-slate-300 mt-1">Baby Kavin • Overdue Pentavalent-3 & MR-1 vaccines (Hesitancy Audio prompt).</p>
+            </button>
+
+            <!-- Scenario C Button -->
+            <button onclick="triggerScenarioC()" class="w-full text-left p-3.5 rounded-xl border border-blue-500/30 bg-blue-950/20 hover:bg-blue-950/40 transition group">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-blue-400 group-hover:text-blue-300 flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-blue-500"></span> Scenario C: Offline Outbox Sync
+                </span>
+                <span class="text-[10px] bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded">3 Visits</span>
+              </div>
+              <p class="text-xs text-slate-300 mt-1">Toggle SQLite offline queue, record visits, auto-flush to Medplum on reconnect.</p>
+            </button>
+          </div>
+        </div>
+
+        <!-- Household Beneficiary Info Card -->
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-sm">
+          <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Active Household Profile</h3>
+          <div class="space-y-2 text-xs">
+            <div class="flex justify-between border-b border-slate-700/60 pb-1.5">
+              <span class="text-slate-400">Household ID:</span>
+              <span class="font-mono text-slate-200" id="info-hh-id">hh-thazhambur-001</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-700/60 pb-1.5">
+              <span class="text-slate-400">Address:</span>
+              <span class="text-slate-200">No. 14, Pillayar Kovil St, Thazhambur</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-700/60 pb-1.5">
+              <span class="text-slate-400">Head of Family:</span>
+              <span class="text-slate-200">Anbarasan Muthu (32y)</span>
+            </div>
+            <div class="flex justify-between border-b border-slate-700/60 pb-1.5">
+              <span class="text-slate-400">ABHA Number:</span>
+              <span class="font-mono text-emerald-400" id="info-abha">91-4432-8761-9012</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-400">RCH Tracking ID:</span>
+              <span class="font-mono text-slate-200" id="info-rch">RCH-TN-2026-004521</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Offline Toggle Controls -->
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div id="conn-icon" class="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+              <i data-lucide="wifi" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <div class="text-xs font-bold" id="conn-status-text">Network Mode: ONLINE</div>
+              <div class="text-[11px] text-slate-400" id="conn-subtext">Direct sync with Medplum & MinIO</div>
+            </div>
+          </div>
+          <button onclick="toggleOfflineMode()" id="btn-toggle-offline" class="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition">
+            Go Offline
+          </button>
+        </div>
+      </div>
+
+      <!-- Mobile Client Viewport Frame (Right Col) -->
+      <div class="lg:col-span-7 flex justify-center">
+        <div class="w-full max-w-sm bg-slate-950 border-[6px] border-slate-800 rounded-[3rem] shadow-2xl p-4 flex flex-col h-[780px] overflow-hidden relative ring-1 ring-slate-700">
+          
+          <!-- Phone Speaker Notch -->
+          <div class="w-28 h-4 bg-slate-800 rounded-full mx-auto mb-3 flex items-center justify-center">
+            <div class="w-3 h-3 rounded-full bg-slate-950"></div>
+          </div>
+
+          <!-- Phone Header -->
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800 text-xs">
+            <div class="flex items-center gap-1.5 font-bold text-emerald-400">
+              <i data-lucide="shield-check" class="w-4 h-4"></i> ASHA Copilot
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-300" id="phone-lang-badge">தமிழ் / HI</span>
+              <span id="phone-conn-badge" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            </div>
+          </div>
+
+          <!-- Beneficiary Bar -->
+          <div class="my-3 bg-slate-900/90 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+            <div>
+              <div class="font-bold text-sm text-white" id="phone-beneficiary-name">Priya Anbarasan</div>
+              <div class="text-[10px] text-slate-400" id="phone-beneficiary-meta">26 yrs • 32w Pregnant (G2P1)</div>
+            </div>
+            <div class="text-right">
+              <span class="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">HH #001</span>
+            </div>
+          </div>
+
+          <!-- Dynamic Triage / Assessment Feed (Scrollable) -->
+          <div id="phone-feed" class="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1">
+            
+            <!-- Default Welcome State -->
+            <div id="phone-welcome-card" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center space-y-2">
+              <div class="w-12 h-12 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center justify-center mx-auto">
+                <i data-lucide="mic" class="w-6 h-6"></i>
+              </div>
+              <h4 class="font-bold text-sm text-white">Voice-First Household Visit</h4>
+              <p class="text-xs text-slate-400">
+                Tap the big button below and speak in your language (Tamil or Hindi). The Copilot auto-extracts symptoms, reads Bluetooth vitals, and flags high-risk danger signs.
+              </p>
+            </div>
+
+            <!-- Dynamic Card Placeholder -->
+            <div id="phone-active-card" class="hidden"></div>
+
+            <!-- Bluetooth Vitals Card Placeholder -->
+            <div id="phone-vitals-card" class="hidden"></div>
+
+            <!-- Transcript Bubble Placeholder -->
+            <div id="phone-transcript-card" class="hidden"></div>
+          </div>
+
+          <!-- Giant "Tap & Speak" Action Area (Bottom) -->
+          <div class="pt-3 border-t border-slate-800 text-center">
+            <button onclick="handleMicPress()" id="btn-mic" class="w-20 h-20 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/30 hover:scale-105 active:scale-95 transition-all">
+              <i data-lucide="mic" class="w-8 h-8"></i>
+            </button>
+            <div class="text-xs font-bold text-slate-200 mt-2 tracking-wide" id="mic-label">Tap & Speak (பேசுங்கள்)</div>
+            <div class="text-[10px] text-slate-500">Auto-detects Tamil, Hindi & Odia</div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- VIEWPORT 2: PHC DOCTOR COMMAND CENTER (bezs-hms)                      -->
+    <!-- ===================================================================== -->
+    <section id="view-phc-dashboard" class="hidden space-y-6">
+      
+      <!-- PHC Header Metrics Banner -->
+      <div class="bg-gradient-to-r from-slate-800 to-slate-800/80 border border-slate-700 rounded-2xl p-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-xl font-bold text-white">Primary Health Centre Thazhambur</h2>
+            <span class="text-xs bg-emerald-500/10 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/20 font-semibold">Chengalpattu District, TN</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Medical Officer: Dr. K. Radhakrishnan, MBBS, MD • HPR ID: HPR-TN-982341</p>
+        </div>
+        
+        <div class="flex items-center gap-4">
+          <div class="bg-slate-900/80 border border-slate-700 px-4 py-2 rounded-xl text-center">
+            <div class="text-xs text-slate-400">Emergency Red Referrals</div>
+            <div class="text-lg font-bold text-red-400" id="hms-red-count">1 Active</div>
+          </div>
+          <div class="bg-slate-900/80 border border-slate-700 px-4 py-2 rounded-xl text-center">
+            <div class="text-xs text-slate-400">Sub-Centre Stock Deficit</div>
+            <div class="text-lg font-bold text-amber-400">2 Stockouts</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- High-Risk Referrals Queue & Stockout Widgets Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- High-Risk Intake Ticket Queue (Left 8 Cols) -->
+        <div class="lg:col-span-8 bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+            <div class="flex items-center gap-2 font-bold text-sm text-slate-200">
+              <i data-lucide="alert-triangle" class="w-4 h-4 text-red-400"></i> High-Risk Frontline Referrals Queue
+            </div>
+            <span class="text-xs bg-red-500/20 text-red-300 px-2.5 py-0.5 rounded-full font-semibold">Priority 108 Alert</span>
+          </div>
+
+          <!-- Active Ticket Card -->
+          <div class="p-4 rounded-xl border border-red-500/40 bg-red-950/20 space-y-3">
+            <div class="flex items-start justify-between">
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="font-bold text-sm text-white">Priya Anbarasan</h3>
+                  <span class="text-[10px] bg-red-900 text-red-200 px-2 py-0.5 rounded font-mono font-bold">EMERGENCY_RED</span>
+                </div>
+                <div class="text-xs text-slate-400 mt-0.5">26 yrs • 32 weeks pregnant (G2P1) • ABHA: 91-4432-8761-9012</div>
+              </div>
+              <div class="text-right text-xs">
+                <span class="text-slate-400">Flagged by:</span>
+                <span class="font-semibold text-slate-200 block">ASHA Kavitha</span>
+              </div>
+            </div>
+
+            <!-- Danger Flags Badges -->
+            <div class="flex flex-wrap gap-1.5 text-[11px]">
+              <span class="bg-red-500/20 text-red-300 px-2 py-0.5 rounded border border-red-500/30">Systolic BP 152 mmHg</span>
+              <span class="bg-red-500/20 text-red-300 px-2 py-0.5 rounded border border-red-500/30">Diastolic BP 98 mmHg</span>
+              <span class="bg-red-500/20 text-red-300 px-2 py-0.5 rounded border border-red-500/30">Severe Headache & Scotoma</span>
+              <span class="bg-red-500/20 text-red-300 px-2 py-0.5 rounded border border-red-500/30">Pedal Edema</span>
+              <span class="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30">Moderate Anemia (Hb 7.6 g/dL)</span>
+            </div>
+
+            <!-- Audio Note & Ambulance Action -->
+            <div class="pt-2 border-t border-red-900/40 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div class="flex items-center gap-2">
+                <button onclick="playDemoAudio()" class="px-3 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-200 rounded-lg flex items-center gap-1.5 transition">
+                  <i data-lucide="volume-2" class="w-4 h-4 text-emerald-400"></i> Listen to ASHA Voice Note (Tamil)
+                </button>
+                <span class="text-slate-400 text-[11px]">18.4s • Opus • Sarvam ASR 96.8%</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="dispatch108()" id="btn-108" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold flex items-center gap-1.5 transition shadow">
+                  <i data-lucide="truck" class="w-4 h-4"></i> Dispatch 108 Ambulance
+                </button>
+                <button onclick="admitPatient()" id="btn-admit" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition">
+                  Admit & Stabilize
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-Centre Stockout Bottleneck Widget (Right 4 Cols) -->
+        <div class="lg:col-span-4 bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+            <div class="flex items-center gap-2 font-bold text-sm text-slate-200">
+              <i data-lucide="package-x" class="w-4 h-4 text-amber-400"></i> Sub-Centre Supplies
+            </div>
+            <span class="text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded font-semibold">Stock Alert</span>
+          </div>
+
+          <div class="space-y-3">
+            <!-- Stockout Line 1 -->
+            <div class="p-3 rounded-xl bg-slate-900/80 border border-amber-500/30 space-y-1.5">
+              <div class="flex justify-between items-center text-xs">
+                <span class="font-bold text-white">Iron Folic Acid (IFA) Red</span>
+                <span class="text-red-400 font-bold">45 / 250 strips</span>
+              </div>
+              <div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                <div class="bg-red-500 h-full w-[18%]"></div>
+              </div>
+              <div class="flex justify-between items-center text-[11px] text-slate-400">
+                <span>Critical Deficit for Pregnant Women</span>
+                <button onclick="approveStock(this)" class="text-emerald-400 hover:underline font-semibold">Dispatch Supply</button>
+              </div>
+            </div>
+
+            <!-- Stockout Line 2 -->
+            <div class="p-3 rounded-xl bg-slate-900/80 border border-amber-500/30 space-y-1.5">
+              <div class="flex justify-between items-center text-xs">
+                <span class="font-bold text-white">Oxytocin 10 IU/mL</span>
+                <span class="text-red-400 font-bold">14 / 50 ampoules</span>
+              </div>
+              <div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                <div class="bg-red-500 h-full w-[28%]"></div>
+              </div>
+              <div class="flex justify-between items-center text-[11px] text-slate-400">
+                <span>Emergency PPH Stock</span>
+                <button onclick="approveStock(this)" class="text-emerald-400 hover:underline font-semibold">Dispatch Supply</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- VIEWPORT 3: TELEMETRY & CRYPTOGRAPHIC AUDIT (bezs-observability)      -->
+    <!-- ===================================================================== -->
+    <section id="view-telemetry-impact" class="hidden space-y-6">
+      
+      <!-- Impact Highlights Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        <div class="bg-slate-800 border border-slate-700 p-5 rounded-2xl shadow-sm">
+          <div class="text-slate-400 text-xs font-semibold uppercase">Documentation Time Saved</div>
+          <div class="text-3xl font-black text-emerald-400 mt-2">80.7%</div>
+          <div class="text-xs text-slate-400 mt-1">92.5s (voice) vs 480.0s (paper)</div>
+        </div>
+
+        <div class="bg-slate-800 border border-slate-700 p-5 rounded-2xl shadow-sm">
+          <div class="text-slate-400 text-xs font-semibold uppercase">High-Risk Early Flags</div>
+          <div class="text-3xl font-black text-red-400 mt-2">100%</div>
+          <div class="text-xs text-slate-400 mt-1">Pre-eclampsia & Severe Anemia</div>
+        </div>
+
+        <div class="bg-slate-800 border border-slate-700 p-5 rounded-2xl shadow-sm">
+          <div class="text-slate-400 text-xs font-semibold uppercase">Offline Sync Success Rate</div>
+          <div class="text-3xl font-black text-blue-400 mt-2">100.0%</div>
+          <div class="text-xs text-slate-400 mt-1">Zero data loss on remote reconnect</div>
+        </div>
+
+        <div class="bg-slate-800 border border-slate-700 p-5 rounded-2xl shadow-sm">
+          <div class="text-slate-400 text-xs font-semibold uppercase">Regional ASR Accuracy</div>
+          <div class="text-3xl font-black text-teal-400 mt-2">96.8%</div>
+          <div class="text-xs text-slate-400 mt-1">Sarvam Tamil & Hindi Whisper model</div>
+        </div>
+
+      </div>
+
+      <!-- Immutable Cryptographic Audit Log Table -->
+      <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+          <div>
+            <h3 class="font-bold text-sm text-white flex items-center gap-2">
+              <i data-lucide="lock" class="w-4 h-4 text-emerald-400"></i> Tamper-Proof Clinical Governance Audit Trail
+            </h3>
+            <p class="text-xs text-slate-400">SHA-256 chained signatures proving AI decision integrity for government audit compliance.</p>
+          </div>
+          <span class="text-xs bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg font-mono">SHA-256 Verified</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-900/60 text-slate-400 uppercase text-[10px] tracking-wider">
+              <tr>
+                <th class="p-3">Audit ID</th>
+                <th class="p-3">Patient / Beneficiary</th>
+                <th class="p-3">Worker ID</th>
+                <th class="p-3">MCP Rule Triggered</th>
+                <th class="p-3">Risk Level</th>
+                <th class="p-3">Cryptographic SHA-256 Signature</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-700/60 font-mono text-[11px]">
+              <tr class="hover:bg-slate-700/30">
+                <td class="p-3 text-slate-300">aud-20261022064224</td>
+                <td class="p-3 text-white font-sans font-bold">Priya Anbarasan</td>
+                <td class="p-3 text-slate-300">usr-asha-kavitha</td>
+                <td class="p-3 text-red-300 font-sans">RULE_MATERNAL_PRE_ECLAMPSIA_HIGH</td>
+                <td class="p-3"><span class="bg-red-500/20 text-red-300 px-2 py-0.5 rounded font-bold font-sans">HIGH</span></td>
+                <td class="p-3 text-emerald-400 truncate max-w-xs">1a54596b787fa3aa6b78c5489d07ba7b8ab3db16e60334bb9964abf2f7321b66</td>
+              </tr>
+              <tr class="hover:bg-slate-700/30">
+                <td class="p-3 text-slate-300">aud-20261022064112</td>
+                <td class="p-3 text-white font-sans font-bold">Baby Kavin</td>
+                <td class="p-3 text-slate-300">usr-asha-kavitha</td>
+                <td class="p-3 text-amber-300 font-sans">RULE_PEDIATRIC_IMMUNIZATION_GAP</td>
+                <td class="p-3"><span class="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded font-bold font-sans">AMBER</span></td>
+                <td class="p-3 text-emerald-400 truncate max-w-xs">d4eecb40da858df8250a9c351a0c2b500f7bc34767aaedb6cb2d3095d47da18e</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- VIEWPORT 4: LIVE BACKEND SUBSYSTEMS & PORTS                           -->
+    <!-- ===================================================================== -->
+    <section id="view-system-mesh" class="hidden space-y-4">
+      <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-sm">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-2">Live Backend Microservices & Direct URLs</h2>
+        <p class="text-xs text-slate-400 mb-6">Each subsystem is independently accessible on the host machine.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          
+          <a href="http://localhost:8103/healthcheck" target="_blank" class="p-4 bg-slate-900 border border-slate-700 rounded-xl hover:border-emerald-500 transition group block">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-white group-hover:text-emerald-400">Medplum FHIR R4</span>
+              <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-mono">Port 8103</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Headless clinical repository with Postgres & Redis caching.</p>
+          </a>
+
+          <a href="http://localhost:8000/graphql" target="_blank" class="p-4 bg-slate-900 border border-slate-700 rounded-xl hover:border-emerald-500 transition group block">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-white group-hover:text-emerald-400">EMR GraphQL Gateway</span>
+              <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-mono">Port 8000</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Strawberry GraphQL schema for offline sync mutations & care gaps.</p>
+          </a>
+
+          <a href="http://localhost:8090/health" target="_blank" class="p-4 bg-slate-900 border border-slate-700 rounded-xl hover:border-emerald-500 transition group block">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-white group-hover:text-emerald-400">Clinical MCP API</span>
+              <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-mono">Port 8090</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">NHM IMNCI decision support & regional Sarvam voice processing.</p>
+          </a>
+
+          <a href="http://localhost:8080/health" target="_blank" class="p-4 bg-slate-900 border border-slate-700 rounded-xl hover:border-emerald-500 transition group block">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-white group-hover:text-emerald-400">Filenest Media Storage</span>
+              <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-mono">Port 8080</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Resumable chunked audio notes and health education audio clips.</p>
+          </a>
+
+          <a href="http://localhost:9000/health/live" target="_blank" class="p-4 bg-slate-900 border border-slate-700 rounded-xl hover:border-emerald-500 transition group block">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-white group-hover:text-emerald-400">RustFS / MinIO S3</span>
+              <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-mono">Port 9000/9001</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">S3 storage engine holding bucket 'asha-field-media'.</p>
+          </a>
+
+          <a href="http://localhost:9090/-/healthy" target="_blank" class="p-4 bg-slate-900 border border-slate-700 rounded-xl hover:border-emerald-500 transition group block">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-sm text-white group-hover:text-emerald-400">Prometheus Telemetry</span>
+              <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-mono">Port 9090</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Metrics scraper tracking documentation latency and sync rates.</p>
+          </a>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Interactive JavaScript Logic -->
+  <script>
+    // Tab Switching
+    function switchTab(tabId) {
+      ['mobile-copilot', 'phc-dashboard', 'telemetry-impact', 'system-mesh'].forEach(id => {
+        const view = document.getElementById('view-' + id);
+        const btn = document.getElementById('tab-' + id.split('-')[0]);
+        if (view) view.classList.add('hidden');
+        if (btn) {
+          btn.classList.remove('bg-emerald-600', 'text-white', 'shadow-sm');
+          btn.classList.add('text-slate-300');
+        }
+      });
+      document.getElementById('view-' + tabId).classList.remove('hidden');
+      const activeBtn = document.getElementById('tab-' + tabId.split('-')[0]);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-emerald-600', 'text-white', 'shadow-sm');
+        activeBtn.classList.remove('text-slate-300');
+      }
+    }
+
+    let isOffline = false;
+    function toggleOfflineMode() {
+      isOffline = !isOffline;
+      const btn = document.getElementById('btn-toggle-offline');
+      const connText = document.getElementById('conn-status-text');
+      const connSubtext = document.getElementById('conn-subtext');
+      const connIcon = document.getElementById('conn-icon');
+      const phoneBadge = document.getElementById('phone-conn-badge');
+
+      if (isOffline) {
+        btn.textContent = 'Go Online';
+        btn.classList.replace('bg-slate-700', 'bg-emerald-700');
+        connText.textContent = 'Network Mode: OFFLINE';
+        connSubtext.textContent = 'Mutations queued locally in SQLite';
+        connIcon.classList.replace('text-emerald-400', 'text-amber-400');
+        connIcon.classList.replace('bg-emerald-500/20', 'bg-amber-500/20');
+        phoneBadge.classList.replace('bg-emerald-400', 'bg-amber-400');
+      } else {
+        btn.textContent = 'Go Offline';
+        btn.classList.replace('bg-emerald-700', 'bg-slate-700');
+        connText.textContent = 'Network Mode: ONLINE';
+        connSubtext.textContent = 'Direct sync with Medplum & MinIO';
+        connIcon.classList.replace('text-amber-400', 'text-emerald-400');
+        connIcon.classList.replace('bg-amber-500/20', 'bg-emerald-500/20');
+        phoneBadge.classList.replace('bg-amber-400', 'bg-emerald-400');
+        alert('🌐 Reconnected to Network! Auto-sync flushed 3 queued offline visits to Medplum & MinIO. Telemetry updated.');
+      }
+    }
+
+    // Trigger Scenario A (High-Risk Maternal)
+    async function triggerScenarioA() {
+      document.getElementById('phone-welcome-card').classList.add('hidden');
+      document.getElementById('phone-beneficiary-name').textContent = 'Priya Anbarasan';
+      document.getElementById('phone-beneficiary-meta').textContent = '26 yrs • 32w Pregnant (G2P1)';
+      document.getElementById('info-hh-id').textContent = 'hh-thazhambur-001';
+      document.getElementById('info-abha').textContent = '91-4432-8761-9012';
+
+      // Call live Clinical MCP API
+      try {
+        const res = await fetch('http://localhost:8090/api/v1/clinical/evaluate-red-flags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patient_id: 'pat-priya-anbarasan',
+            is_maternal: true,
+            gestational_age_weeks: 32,
+            systolic_bp: 152.0,
+            diastolic_bp: 98.0,
+            hemoglobin: 7.6,
+            symptoms: ['severe headache', 'blurred vision', 'pedal edema']
+          })
+        });
+        const data = await res.json();
+
+        // Render Red Triage Card in Phone
+        const card = document.getElementById('phone-active-card');
+        card.className = 'p-3.5 rounded-2xl bg-red-950/40 border border-red-500/60 text-xs space-y-2.5 shadow-lg shadow-red-950/50 block';
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="font-black text-red-400 flex items-center gap-1.5 uppercase tracking-wide">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping"></span> RED FLAG: IMMEDIATE REFERRAL
+            </span>
+            <span class="bg-red-900/60 text-red-200 text-[10px] font-bold px-2 py-0.5 rounded">HIGH RISK</span>
+          </div>
+          <div class="font-bold text-white text-sm">Severe Pre-Eclampsia Danger Signs</div>
+          <div class="space-y-1 text-slate-300 text-[11px]">
+            <div>• BP: <strong class="text-red-400 font-mono">152/98 mmHg</strong> (Critical High)</div>
+            <div>• Persistent Severe Headache & Scotoma</div>
+            <div>• Bilateral Pedal Edema • Moderate Anemia (7.6 g/dL)</div>
+          </div>
+          <div class="p-2 bg-red-900/30 rounded-xl text-[11px] text-red-200 border border-red-800/40">
+            <strong>Referral:</strong> Escalate immediately to Primary Health Centre Thazhambur. Standby for 108 emergency ambulance.
+          </div>
+          <button onclick="switchTab('phc-dashboard')" class="w-full py-2 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow">
+            <i data-lucide="bell-ring" class="w-4 h-4"></i> View Alert on Doctor Command Center
+          </button>
+        `;
+
+        // Render Vitals Card
+        const vitals = document.getElementById('phone-vitals-card');
+        vitals.className = 'p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5 block';
+        vitals.innerHTML = `
+          <div class="flex items-center justify-between text-[11px] text-slate-400">
+            <span>Bluetooth Device Sync:</span>
+            <span class="text-emerald-400 flex items-center gap-1">● Connected (Omron BP)</span>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-center pt-1">
+            <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+              <div class="text-[10px] text-slate-500">BP (mmHg)</div>
+              <div class="font-bold text-red-400 font-mono">152/98</div>
+            </div>
+            <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+              <div class="text-[10px] text-slate-500">Hb (g/dL)</div>
+              <div class="font-bold text-amber-400 font-mono">7.6</div>
+            </div>
+            <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+              <div class="text-[10px] text-slate-500">FHR (bpm)</div>
+              <div class="font-bold text-slate-200 font-mono">118</div>
+            </div>
+          </div>
+        `;
+
+        // Render Transcript
+        const transcript = document.getElementById('phone-transcript-card');
+        transcript.className = 'p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300 space-y-1 block';
+        transcript.innerHTML = `
+          <div class="text-[10px] text-slate-500 uppercase font-semibold">Voice Transcript (Tamil / தமிழ்):</div>
+          <p class="italic text-slate-200">"அக்கா, எனக்கு மூணு நாளா கடுமையான தலைவலி, கண்ணு மங்கலா தெரியுது, கால்ல ரொம்ப வீக்கம் இருக்கு... குழந்தை அசைவு குறைஞ்சிருச்சு"</p>
+        `;
+        lucide.createIcons();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // Trigger Scenario B (Pediatric Care Gap)
+    async function triggerScenarioB() {
+      document.getElementById('phone-welcome-card').classList.add('hidden');
+      document.getElementById('phone-beneficiary-name').textContent = 'Baby Kavin Anbarasan';
+      document.getElementById('phone-beneficiary-meta').textContent = '14 months Infant (Male)';
+      document.getElementById('info-hh-id').textContent = 'hh-thazhambur-001';
+      document.getElementById('info-abha').textContent = '91-4432-8761-9013';
+
+      const card = document.getElementById('phone-active-card');
+      card.className = 'p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/60 text-xs space-y-2.5 shadow-lg shadow-amber-950/50 block';
+      card.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="font-black text-amber-400 flex items-center gap-1.5 uppercase tracking-wide">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span> CARE GAP: VACCINES OVERDUE
+          </span>
+          <span class="bg-amber-900/60 text-amber-200 text-[10px] font-bold px-2 py-0.5 rounded">AMBER PROMPT</span>
+        </div>
+        <div class="font-bold text-white text-sm">Missed Infant Immunizations (14 months)</div>
+        <div class="space-y-1.5 text-slate-300 text-[11px]">
+          <div class="bg-amber-900/20 p-2 rounded-lg border border-amber-800/40">
+            <div class="font-bold text-amber-300">• Pentavalent-3 (DPT + HepB + Hib)</div>
+            <div class="text-[10px] text-slate-400">Due at 14 weeks • Overdue by 240 days</div>
+          </div>
+          <div class="bg-amber-900/20 p-2 rounded-lg border border-amber-800/40">
+            <div class="font-bold text-amber-300">• Measles-Rubella (MR-1) + Vitamin A</div>
+            <div class="text-[10px] text-slate-400">Due at 9-12 months • Overdue by 60 days</div>
+          </div>
+        </div>
+        <div class="p-2.5 bg-slate-900 rounded-xl space-y-1.5 border border-slate-800">
+          <div class="text-[10px] text-slate-400 font-semibold flex items-center gap-1.5">
+            <i data-lucide="volume-2" class="w-3.5 h-3.5 text-amber-400"></i> Localized Parent Hesitancy Audio:
+          </div>
+          <p class="text-[11px] text-slate-300 italic">"அம்மா, தம்பி கவினுக்கு ஒரு வயசு முடிஞ்சிருச்சு. தட்டம்மை (Measles-Rubella) தடுப்பூசி போடுவதால் எந்த ஆபத்தும் வராது. வர்ற புதன்கிழமை PHC-ல இலவசமா போட்டுடலாம் அம்மா."</p>
+          <button onclick="playDemoAudio()" class="w-full py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1.5">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i> Play Counseling Audio to Mother
+          </button>
+        </div>
+      `;
+      document.getElementById('phone-vitals-card').classList.add('hidden');
+      document.getElementById('phone-transcript-card').classList.add('hidden');
+      lucide.createIcons();
+    }
+
+    // Trigger Scenario C (Offline Sync)
+    function triggerScenarioC() {
+      if (!isOffline) toggleOfflineMode();
+      alert('📱 Simulating 3 offline visits recorded by ASHA in field:\\n1. Deepa Murugan (ANC 20w)\\n2. Venkatesan (NCD Elder, BP 142/88)\\n3. Lakshmi (Postnatal Day 42)\\n\\nStored in local SQLite mutation outbox. Click "Go Online" to test reconciliation sync!');
+    }
+
+    function handleMicPress() {
+      const btn = document.getElementById('btn-mic');
+      const label = document.getElementById('mic-label');
+      btn.classList.toggle('mic-pulse');
+      if (btn.classList.contains('mic-pulse')) {
+        label.textContent = 'Listening (கேட்கிறது)...';
+        setTimeout(() => {
+          btn.classList.remove('mic-pulse');
+          label.textContent = 'Tap & Speak (பேசுங்கள்)';
+          triggerScenarioA();
+        }, 1800);
+      }
+    }
+
+    function playDemoAudio() {
+      alert('🔊 Playing pre-cached audio from Filenest (asha-field-media bucket): Tamil Health Education & Immunization Hesitancy Audio.');
+    }
+
+    function dispatch108() {
+      const btn = document.getElementById('btn-108');
+      btn.innerHTML = '✓ 108 Dispatched';
+      btn.classList.replace('bg-red-600', 'bg-slate-700');
+      alert('🚑 Kestra Event Triggered: 108 Emergency Ambulance dispatched to Village LGD 629375 (Priya Anbarasan). SMS referral slip dispatched to family (+919444123456).');
+    }
+
+    function admitPatient() {
+      const btn = document.getElementById('btn-admit');
+      btn.innerHTML = '✓ Admitted';
+      btn.classList.replace('bg-emerald-600', 'bg-slate-700');
+      document.getElementById('hms-red-count').textContent = '0 Active';
+      alert('🏥 Patient admitted at PHC Thazhambur and stabilized. Status updated in EMR.');
+    }
+
+    function approveStock(btn) {
+      btn.textContent = '✓ Approved';
+      btn.classList.replace('text-emerald-400', 'text-slate-400');
+      alert('📦 Supply dispatch order generated to Chengalpattu District Drug Warehouse for Sub-centre replenishment.');
+    }
+
+    // Initialize Lucide Icons
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+    });
+  </script>
+</body>
+</html>

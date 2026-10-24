@@ -1,0 +1,27 @@
+{
+  "port": 8103,
+  "baseUrl": "http://localhost:8103/",
+  "appBaseUrl": "http://localhost:3000/",
+  "binaryStorage": "file:./binary/",
+  "storageBaseUrl": "http://localhost:8103/storage/",
+  "supportEmail": "\"Medplum\" <support@medplum.com>",
+  "allowedOrigins": "*",
+  "introspectionEnabled": true,
+  "rateLimitsEnabled": false,
+  "database": {
+    "host": "postgres-medplum",
+    "port": 5432,
+    "dbname": "medplum",
+    "username": "medplum",
+    "password": "medplum_secure_password"
+  },
+  "redis": {
+    "host": "redis-medplum",
+    "port": 6379
+  },
+  "bullmq": {
+    "removeOnFail": { "count": 1 },
+    "removeOnComplete": { "count": 1 }
+  },
+  "shutdownTimeoutMilliseconds": 30000
+}
